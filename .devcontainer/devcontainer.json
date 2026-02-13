@@ -1,0 +1,32 @@
+{
+  "name": "vision-assist-nav-sim-dev-env",
+  "build": {
+    "dockerfile": "../docker/Dockerfile",
+    "context": "../docker",
+    "args": {
+      "USERNAME": "${localEnv:USER}"
+    }
+  },
+  "remoteUser": "${localEnv:USER}",
+  "updateRemoteUserUID": true,
+  "runArgs": [
+    "--privileged",
+    "--name", "vision-assist-nav-sim-dev-env",
+    "--net", "host",
+    "--gpus", "all",
+    "--shm-size=16g",
+    "-e", "PYTHONUNBUFFERED=1",
+    "-e", "DISPLAY=:0",
+    "-v", "/tmp/.X11-unix:/tmp/.X11-unix:rw",
+    "-v", "/dev:/dev"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cmake-tools"
+      ]
+    }
+  }
+}
