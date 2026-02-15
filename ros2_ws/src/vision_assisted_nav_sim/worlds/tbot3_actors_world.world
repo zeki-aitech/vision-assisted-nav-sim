@@ -52,6 +52,7 @@
 
 
     <actor name="actor1">
+       <plugin name="actor_collisions_plugin" filename="libActorCollisionsPlugin.so"/>
        <skin>
           <filename>stand.dae</filename>
           <scale>0.3</scale>
@@ -84,6 +85,7 @@
     </actor>
 
     <actor name="actor2">
+       <plugin name="actor_collisions_plugin" filename="libActorCollisionsPlugin.so"/>
        <skin>
           <filename>walk.dae</filename>
           <scale>0.3</scale>
