@@ -1,6 +1,9 @@
-/build
-/log
-/install
+build
+log
+install
 
 /ref
 /test_temp
+
+
+*.pt
