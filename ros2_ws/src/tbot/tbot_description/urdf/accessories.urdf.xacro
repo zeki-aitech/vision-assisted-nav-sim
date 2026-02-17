@@ -1,19 +1,12 @@
 <?xml version="1.0" ?>
 <robot xmlns:xacro="http://ros.org/wiki/xacro">
   <!-- accessories -->
-  <link name="imu_link">
-    <!-- <visual>
-      <geometry>
-          <box size="0.036 0.039 0.005"/>
-      </geometry>
-      <material name="yellow"/>
-    </visual> -->
-  </link>
 
+  <link name="imu_link"></link>
   <joint name="imu_joint" type="fixed">
     <parent link="chassis_link"/>
     <child link="imu_link"/>
-    <origin xyz="${0.025-chassis_length/2} 0 ${chassis_height/2 + 0.01}" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
 
@@ -39,7 +32,6 @@
       <origin xyz="-0.05 0 0.2" rpy="0 0 0"/>
   </joint>
 
-
   <link name="camera_optical_link"></link>
   <joint name="camera_optical_joint" type="fixed">
       <parent link="camera_link"/>
@@ -47,8 +39,15 @@
       <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
   </joint>  
 
+  <link name="camera_depth_link"></link>
+  <joint name="camera_depth_joint" type="fixed">
+      <parent link="camera_link"/>
+      <child link="camera_depth_link"/>
+      <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>  
+
   <!-- lidar -->
-  <link name="laser_link">
+  <link name="base_scan">
     <visual>
       <geometry>
         <cylinder radius="0.03" length="0.04"/>
@@ -73,9 +72,9 @@
   </link>
   
   <joint name="laser_joint" type="fixed">
-    <origin xyz="${0.05} 0 ${0.1}" rpy="0 0 0"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
     <parent link="chassis_link"/>
-    <child link="laser_link"/>
+    <child link="base_scan"/>
   </joint>
 
 
