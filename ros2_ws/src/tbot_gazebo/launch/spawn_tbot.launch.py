@@ -6,6 +6,11 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch.substitutions import Command
+from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import FindExecutable
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -19,11 +24,26 @@ def generate_launch_description():
     #     model_folder,
     #     'model.sdf'
     # )
-    TBOT_MODEL = 'tbot_wf'
+    
+    TBOT_MODEL = 'tbot'
     urdf_path = os.path.join(
-        get_package_share_directory('tbot_gazebo'),
+        get_package_share_directory('tbot_description'),
         'urdf',
-        'tbot_wf.urdf'
+        'tbot.urdf.xacro'
+    )
+    
+    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
+    
+    robot_desc = ParameterValue(
+        Command([
+            PathJoinSubstitution([FindExecutable(name='xacro')]),
+            ' ',
+            PathJoinSubstitution(
+                [FindPackageShare('tbot_description'), 'urdf', 'tbot.urdf.xacro']
+            ),
+            ' ',
+            'is_sim:=', use_sim_time
+        ])
     )
 
     # Launch configuration variables specific to simulation
@@ -44,7 +64,8 @@ def generate_launch_description():
         executable='spawn_entity.py',
         arguments=[
             '-entity', TBOT_MODEL,
-            '-file', urdf_path,
+            # '-file', urdf_path,
+            '-topic', 'robot_description',
             '-x', x_pose,
             '-y', y_pose,
             '-z', '0.01',

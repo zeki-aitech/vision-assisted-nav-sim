@@ -6,25 +6,42 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch.substitutions import Command
+from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import FindExecutable
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
     # TBOT_MODEL = os.environ['TBOT_MODEL']
-    TBOT_MODEL = 'wf'
+    # TBOT_MODEL = 'wf'
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
-    urdf_file_name = 'tbot_' + TBOT_MODEL + '.urdf'
+    # urdf_file_name = 'tbot_' + TBOT_MODEL + '.urdf'
     frame_prefix = LaunchConfiguration('frame_prefix', default='')
 
-    print('urdf_file_name : {}'.format(urdf_file_name))
+    # print('urdf_file_name : {}'.format(urdf_file_name))
 
-    urdf_path = os.path.join(
-        get_package_share_directory('tbot_gazebo'),
-        'urdf',
-        urdf_file_name)
+    # urdf_path = os.path.join(
+    #     get_package_share_directory('tbot_gazebo'),
+    #     'urdf',
+    #     urdf_file_name)
 
-    with open(urdf_path, 'r') as infp:
-        robot_desc = infp.read()
+    # with open(urdf_path, 'r') as infp:
+    #     robot_desc = infp.read()
+    
+    robot_desc = ParameterValue(
+        Command([
+            PathJoinSubstitution([FindExecutable(name='xacro')]),
+            ' ',
+            PathJoinSubstitution(
+                [FindPackageShare('tbot_description'), 'urdf', 'tbot.urdf.xacro']
+            ),
+            ' ',
+            'is_sim:=', use_sim_time
+        ])
+    )
 
     return LaunchDescription([
         DeclareLaunchArgument(
