@@ -121,15 +121,6 @@ controller_server:
 
     # DWB parameters
     FollowPath:
-      # plugin: "nav2_rotation_shim_controller::RotationShimController"
-      # primary_controller: "dwb_core::DWBLocalPlanner"
-      # angular_dist_threshold: 0.785
-      # forward_sampling_distance: 0.5
-      # rotate_to_heading_angular_vel: 1.8
-      # max_angular_accel: 3.2
-      # simulate_ahead_time: 1.0
-      # rotate_to_goal_heading: true
-
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True
       min_vel_x: 0.0
@@ -170,54 +161,6 @@ controller_server:
       RotateToGoal.scale: 32.0
       RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
-
-      # plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-
-      # # Base kinematic limits (tune to your robot)
-      # max_linear_vel: 0.6           # Humble docs show 0.5 default; increase if needed 
-      # min_linear_vel: 0.0           # >0 if you don't want reversing 
-      # max_angular_vel: 2.5        
-
-      # # Lookahead / tracking
-      # use_velocity_scaled_lookahead_dist: true        
-      # lookahead_time: 1.5
-      # lookahead_dist: 0.6                               
-      # min_lookahead_dist: 0.3
-      # max_lookahead_dist: 1.0
-      # use_interpolation: true                           # smoother on sparse paths [web:5]
-
-      # # Nominal linear speed
-      # desired_linear_vel: 0.5                           # starting point from docs [web:2][web:3]
-
-      # # Collision checking
-      # use_collision_detection: true                     
-      # max_allowed_time_to_collision_up_to_carrot: 1.0  
-
-      # # Regulation based on curvature and cost
-      # use_regulated_linear_velocity_scaling: true       
-      # use_cost_regulated_linear_velocity_scaling: true  
-      # regulated_linear_scaling_min_radius: 0.9          # tighten/loosen turn slowdowns 
-      # regulated_linear_scaling_min_speed: 0.15        
-      # cost_scaling_dist: 0.6                            # ≤ local inflation_radius 
-      # cost_scaling_gain: 0.5                            # <1 for smoother slowdowns 
-
-      # # Tie to costmap inflation (match local costmap params)
-      # inflation_cost_scaling_factor: 3.0                # usually same as local costmap 
-
-      # # Approach behavior
-      # min_approach_linear_velocity: 0.05              
-      # approach_velocity_scaling_dist: 0.6               # ~forward costmap range 
-
-      # # Rotate-to-heading behavior
-      # use_rotate_to_heading: true                       # disable for Ackermann 
-      # rotate_to_heading_min_angle: 0.785                # ≈45° 
-      # rotate_to_heading_angular_vel: 1.8              
-      # max_angular_accel: 3.2                           
-
-      # # Misc
-      # transform_tolerance: 0.2                        
-      # max_robot_pose_search_dist: 10.0                  # often costmap extent 
-
 
 controller_server_rclcpp_node:
   ros__parameters:

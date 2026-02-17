@@ -261,7 +261,7 @@
     </inertial>-->
   </link>
 
-  <joint name="${namespace}camera_rgb_joint" type="fixed">
+  <!-- <joint name="${namespace}camera_rgb_joint" type="fixed">
     <origin xyz="0.005 0.018 0.013" rpy="0 0 0"/>
     <!-- <origin xyz="${r200_cam_rgb_px} ${r200_cam_rgb_py} ${r200_cam_rgb_pz}" rpy="0 0 0"/> -->
     <parent link="${namespace}camera_link"/>
@@ -289,6 +289,6 @@
     <parent link="${namespace}camera_depth_frame"/>
     <child link="${namespace}camera_depth_optical_frame"/>
   </joint>
-  <link name="${namespace}camera_depth_optical_frame"/>
+  <link name="${namespace}camera_depth_optical_frame"/> -->
 
 </robot>
