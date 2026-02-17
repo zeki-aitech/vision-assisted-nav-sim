@@ -35,7 +35,7 @@ joy_teleop/teleop_twist_joy_node:
       yaw: 0.6
     scale_angular_turbo:
       yaw: 1.2
-    enable_button: 9
+    enable_button: 4
     enable_turbo_button: 5
 joy_teleop/joy_node:
   ros__parameters:

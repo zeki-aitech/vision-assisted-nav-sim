@@ -14,7 +14,7 @@ def generate_launch_description():
     )
     
     filepath_config_twist_mux = PathJoinSubstitution(
-        [FindPackageShare('zbot_stella_n2_control'), 'config', 'twist_mux.yaml']
+        [FindPackageShare('tbot_control'), 'config', 'twist_mux.yaml']
     )
 
     use_sim_time = LaunchConfiguration('use_sim_time')
