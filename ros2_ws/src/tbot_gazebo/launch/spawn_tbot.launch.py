@@ -11,13 +11,19 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # Get the urdf file
     # TBOT_MODEL = os.environ['TBOT_MODEL']
-    TBOT_MODEL = 'wf'
-    model_folder = 'tbot_' + TBOT_MODEL
+    # TBOT_MODEL = 'wf'
+    # model_folder = 'tbot_' + TBOT_MODEL
+    # urdf_path = os.path.join(
+    #     get_package_share_directory('tbot_gazebo'),
+    #     'models',
+    #     model_folder,
+    #     'model.sdf'
+    # )
+    TBOT_MODEL = 'tbot_wf'
     urdf_path = os.path.join(
         get_package_share_directory('tbot_gazebo'),
-        'models',
-        model_folder,
-        'model.sdf'
+        'urdf',
+        'tbot_wf.urdf'
     )
 
     # Launch configuration variables specific to simulation
