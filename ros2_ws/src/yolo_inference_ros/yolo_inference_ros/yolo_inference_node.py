@@ -14,7 +14,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros import TransformException
 from tf2_ros.transform_listener import TransformListener
 
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from vision_msgs.msg import Detection2DArray
 from vision_msgs.msg import Detection3DArray
 
@@ -99,15 +99,36 @@ class YoloInferenceNode(Node):
             depth=1,
         )
 
-        self.rgb_sub_ = message_filters.create_subscription(
-            Image, '/camera/image_raw', self.img_callback, self.image_qos_profile)
-        
         if self.enable_3d:
-            self.init_3d_detection()
+            self.get_logger().info("Mode: 3D (RGB + Depth + Info)")
+            self.init_3d()
+            self.tf_buffer = Buffer()
+            self.cv_bridge = CvBridge()
+            self.tf_listener = TransformListener(self.tf_buffer, self)
+            self.image_sub = message_filters.create_subscription(
+                self, Image, '/camera/image_raw', qos_profile=self.image_qos_profile)
+            self.depth_sub = message_filters.Subscriber(
+                self, Image, '/camera/depth/image_raw', qos_profile=self.depth_qos_profile)
+            self.depth_info_sub = message_filters.Subscriber(
+                self, CameraInfo, '/camera/depth/camera_info', qos_profile=self.depth_info_qos_profile)
+            self.ts = message_filters.ApproximateTimeSynchronizer(
+                [self.image_sub, self.depth_sub, self.depth_info_sub], 
+                queue_size=10, slop=0.5)
+            self.ts.registerCallback(self.callback_3d)
+            
+        else:
+            self.get_logger().info("Mode: 2D (RGB Only)")
+            # Dùng Subscriber thường cho nhẹ
+            self.sub_2d = self.create_subscription(
+                Image, 
+                '/camera/image_raw', 
+                self.callback_2d, 
+                self.image_qos_profile
+            )
         
         self.get_logger().info('YoloInferenceNode initialized')
         
-    def init_3d_detection(self):
+    def init_3d(self):
         
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("depth_reliability", QoSReliabilityPolicy.BEST_EFFORT)
@@ -140,16 +161,11 @@ class YoloInferenceNode(Node):
             depth=1,
         )
         
-        self.tf_buffer = Buffer()
-        self.cv_bridge = CvBridge()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+    def callback_2d(self, image: Image):
+        pass
         
-        self.depth_sub_ = message_filters.create_subscription(
-            Image, '/camera/depth/image_raw', self.depth_callback, self.depth_qos_profile)
-        
-
-    def run(self):
-        self.get_logger().info('YoloInferenceNode running')
+    def callback_3d(self, image: Image, depth: Image, depth_info: CameraInfo):
+        pass
         
         
 def main(args=None):
