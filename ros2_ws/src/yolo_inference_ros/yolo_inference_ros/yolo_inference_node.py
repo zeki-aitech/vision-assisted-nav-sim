@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 from cv_bridge import CvBridge
 
 import rclpy
@@ -118,7 +118,6 @@ class YoloInferenceNode(Node):
             
         else:
             self.get_logger().info("Mode: 2D (RGB Only)")
-            # Dùng Subscriber thường cho nhẹ
             self.sub_2d = self.create_subscription(
                 Image, 
                 '/camera/image_raw', 
@@ -126,8 +125,54 @@ class YoloInferenceNode(Node):
                 self.image_qos_profile
             )
         
+        self.init_yolo_model()
+        
         self.get_logger().info('YoloInferenceNode initialized')
         
+    def init_yolo_model(self):
+        self.get_logger().info(f"Loading YOLO model: {self.model} ...")
+        
+        try:
+            # 1. Load Model
+            self.yolo_model = YOLO(model=self.model, task=self.task)
+            
+            # 2. Check Device Safety
+            if 'cuda' in self.device and not torch.cuda.is_available():
+                self.get_logger().warn(f"CUDA requested but not available! Fallback to CPU.")
+                self.device = 'cpu'
+            
+            # Only move device if it's a PyTorch model, other models will handle device themselves
+            if self.model.endswith('.pt'):
+                 self.yolo_model.to(self.device)
+
+            self.get_logger().info(f"Model loaded on {self.device}")
+
+        except Exception as e:
+            self.get_logger().error(f"CRITICAL: Failed to load YOLO model: {e}")
+            raise e
+        
+        # 3. Fuse Model (Only apply to PyTorch models)
+        if self.fuse_model and self.model.endswith('.pt'):
+            try:
+                self.get_logger().info("Fusing model layers for faster inference...")
+                self.yolo_model.fuse()
+            except Exception as e:
+                self.get_logger().warn(f"Could not fuse model: {e}")
+
+        # 4. WARMUP (Very important for real-time)
+        try:
+            self.get_logger().info("Warming up model...")
+            # Create a dummy input tensor for warmup
+            dummy_input = torch.zeros((1, 3, self.imgsz_height, self.imgsz_width)).to(self.device)
+            
+            # Run inference with dummy input (verbose=False to avoid logging)
+            self.yolo_model(dummy_input, verbose=False, device=self.device)
+            self.get_logger().info("Warmup complete! System ready.")
+            
+        except Exception as e:
+            self.get_logger().warn(f"Warmup failed (non-critical): {e}")
+        
+
     def init_3d(self):
         
         self.declare_parameter("target_frame", "base_link")
@@ -162,14 +207,22 @@ class YoloInferenceNode(Node):
         )
         
     def callback_2d(self, image: Image):
-        pass
+        self._process_data(image)
         
     def callback_3d(self, image: Image, depth: Image, depth_info: CameraInfo):
-        pass
-        
+        self._process_data(image, depth, depth_info)
+    
+    def _process_data(
+        self, 
+        image_msg, 
+        depth_msg: Optional[Image] = None, 
+        depth_info_msg: Optional[CameraInfo] = None
+    ):
+        self.get_logger().info("Processing data...")
+
         
 def main(args=None):
     rclpy.init(args=args)
     node = YoloInferenceNode()
-    node.run()
+    rclpy.spin(node)
     rclpy.shutdown()

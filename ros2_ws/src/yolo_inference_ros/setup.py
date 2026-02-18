@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'yolo_inference_ros = yolo_inference_ros.yolo_inference_ros:main',
+            'yolo_inference_node = yolo_inference_ros.yolo_inference_node:main',
         ],
     },
 )
