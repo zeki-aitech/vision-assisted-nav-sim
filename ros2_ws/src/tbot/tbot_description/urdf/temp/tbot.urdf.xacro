@@ -1,0 +1,217 @@
+<?xml version="1.0" ?>
+<robot name="tbot" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- https://en.wikipedia.org/wiki/List_of_moments_of_inertia#List_of_3D_inertia_tensors -->
+  <xacro:include filename="inertial_macros.xacro"/>
+
+  <xacro:arg name="is_sim" default="false"/>
+  
+
+  <xacro:property name="PI" value="3.1415926535897931"/>
+
+  <xacro:property name="footprint_vertical_offset" value="0.0085" />
+
+  <!-- <xacro:property name="chassis_length" value="0.2" />
+  <xacro:property name="chassis_width" value="0.2" />
+  <xacro:property name="chassis_height" value="0.047" />
+  <xacro:property name="chassis_mass" value="1.0" /> -->
+
+  <xacro:property name="chassis_length" value="0.18" />
+  <xacro:property name="chassis_width" value="0.14" />
+  <xacro:property name="chassis_height" value="0.047" />
+  <xacro:property name="chassis_mass" value="0.7" />
+
+  <xacro:property name="wheel_radius" value="0.033" />
+  <xacro:property name="wheel_width" value="0.026" />
+  <xacro:property name="wheel_mass" value="0.035" />
+  <xacro:property name="wheel_separation" value="${chassis_width + 0.023*2}" />
+
+  <xacro:property name="ball_caster_radius" value="0.008" />
+  <xacro:property name="ball_caster_mass" value="0.00396" />
+
+  <material name="dark_grey"><color rgba="0.2 0.2 0.2 1.0" /></material>
+  <material name="light_grey"><color rgba="0.4 0.4 0.4 1.0" /></material>
+  <material name="yellow"><color rgba="0.8 0.8 0.0 1.0" /></material>
+  <material name="black"><color rgba="0.15 0.15 0.15 1.0" /></material>
+  <material name="blue"><color rgba="0.0 0.0 0.8 1.0"/></material>
+  <material name="red"><color rgba="0.8 0.0 0.0 1.0"/></material>
+  <material name="green"><color rgba="0.0 0.8 0.0 1.0"/></material>
+  <material name="white"><color rgba="1.0 1.0 1.0 1.0"/></material>
+
+  <xacro:macro name="wheel" params="prefix *joint_pose">
+
+    <link name="${prefix}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${PI/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="red"/>
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 0" rpy="${PI/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+
+      <inertial>
+        <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+        <mass value="${wheel_mass}"/> 
+        <inertia
+          ixx="${(1/12) * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}" ixy="0.0" ixz="0.0"
+          iyy="${(1/12) * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}" iyz="0.0"
+          izz="${(1/12) * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="chassis_link"/>
+      <child link="${prefix}_wheel_link"/>
+      <xacro:insert_block name="joint_pose" />
+      <axis xyz="0 1 0"/>
+    </joint>
+
+    <!-- <transmission name="${prefix}_wheel_trans">
+      <type>transmission_interface/SimpleTransmission</type>
+      <joint name="${prefix}_wheel">
+        <hardwareInterface>hardware_interface/VelocityJointInterface</hardwareInterface>
+      </joint>
+      <actuator name="${prefix}_actuator">
+        <mechanicalReduction>1</mechanicalReduction>
+      </actuator>
+    </transmission> -->
+  </xacro:macro>
+
+  <!-- <link name="base_link"></link>
+
+  <link name="base_footprint"></link>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 ${footprint_vertical_offset + chassis_height/2}" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <joint name="chassis_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="chassis_link"/>
+  </joint>
+
+  <link name="chassis_link" > 
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+    <visual>
+      <origin xyz="0.03 0 0.05" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length*2/3} ${chassis_width/2} ${chassis_height}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+      <mass value="${chassis_mass}"/>
+      <inertia 
+        ixx="${(1/12) * chassis_mass * (chassis_width*chassis_width+chassis_height*chassis_height)}" ixy="0.0" ixz="0.0"
+        iyy="${(1/12) * chassis_mass * (chassis_length*chassis_length+chassis_height*chassis_height)}" iyz="0.0"
+        izz="${(1/12) * chassis_mass * (chassis_length*chassis_length+chassis_width*chassis_width)}" />
+      </inertial>
+  </link> -->
+
+  <link name="base_link"></link>
+
+  <link name="base_footprint"></link>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 ${-1 *(footprint_vertical_offset + chassis_height/2)}" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <joint name="chassis_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="chassis_link"/>
+  </joint>
+
+  <link name="chassis_link" > 
+    <visual>
+      <origin xyz="0 0 ${footprint_vertical_offset}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+      <mass value="${chassis_mass}"/>
+      <inertia 
+        ixx="${(1/12) * chassis_mass * (chassis_width*chassis_width+chassis_height*chassis_height)}" ixy="0.0" ixz="0.0"
+        iyy="${(1/12) * chassis_mass * (chassis_length*chassis_length+chassis_height*chassis_height)}" iyz="0.0"
+        izz="${(1/12) * chassis_mass * (chassis_length*chassis_length+chassis_width*chassis_width)}" />
+      </inertial>
+  </link>
+
+  <xacro:wheel prefix="left">
+    <origin xyz="${chassis_length/2 - 0.031} ${chassis_width/2 + 0.023} 0" rpy="0 0 0" />
+  </xacro:wheel>
+
+  <xacro:wheel prefix="right">
+    <origin xyz="${chassis_length/2 - 0.031} -${chassis_width/2 + 0.023} 0" rpy="0 0 0" />
+  </xacro:wheel>
+
+  <link name="ball_caster_link">
+    <visual>
+      <geometry>
+        <sphere radius="${ball_caster_radius}"/> 
+      </geometry>
+      <material name="white"/>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="${ball_caster_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${ball_caster_mass}"/>
+      <inertia 
+        ixx="${(2/5) * ball_caster_mass * (ball_caster_radius * ball_caster_radius)}" ixy="0" ixz="0" 
+        iyy="${(2/5) * ball_caster_mass * (ball_caster_radius * ball_caster_radius)}" iyz="0" 
+        izz="${(2/5) * ball_caster_mass * (ball_caster_radius * ball_caster_radius)}"/>
+    </inertial>
+  </link>
+
+  <joint name="ball_caster_joint" type="fixed">
+    <origin xyz="-${chassis_length/2 - 0.034} 0 -${wheel_radius - ball_caster_radius}" rpy="0 0 0"/>
+    <parent link="chassis_link"/>
+    <child link="ball_caster_link"/>
+  </joint>
+
+  <xacro:if value="$(arg is_sim)">
+    <xacro:include filename="$(find tbot_description)/urdf/tbot.gazebo" />
+  </xacro:if>
+
+  <xacro:include filename="$(find tbot_description)/urdf/accessories.urdf.xacro" />
+
+</robot>

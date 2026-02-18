@@ -12,3 +12,5 @@ ros2 launch tbot_nav2 nav2.launch.py use_sim_time:=true
 ros2 launch yolo_bringup yolo.launch.py model:=yolov8n-seg.pt input_image_topic:=/camera/image_raw
 
 ros2 launch tbot_gazebo sim.launch.py x_pose:=-5.0 y_pose:=-2.5
+
+ros2 run nav2_map_server map_saver_cli -f my_map

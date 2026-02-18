@@ -16,21 +16,21 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     # Get the urdf file
     # TBOT_MODEL = os.environ['TBOT_MODEL']
-    # TBOT_MODEL = 'wf'
-    # model_folder = 'tbot_' + TBOT_MODEL
-    # urdf_path = os.path.join(
-    #     get_package_share_directory('tbot_gazebo'),
-    #     'models',
-    #     model_folder,
-    #     'model.sdf'
-    # )
-    
-    TBOT_MODEL = 'tbot'
+    TBOT_MODEL = 'wf'
+    model_folder = 'tbot_' + TBOT_MODEL
     urdf_path = os.path.join(
-        get_package_share_directory('tbot_description'),
-        'urdf',
-        'tbot.urdf.xacro'
+        get_package_share_directory('tbot_gazebo'),
+        'models',
+        model_folder,
+        'model.sdf'
     )
+    
+    # TBOT_MODEL = 'tbot'
+    # urdf_path = os.path.join(
+    #     get_package_share_directory('tbot_description'),
+    #     'urdf',
+    #     'tbot.urdf.xacro'
+    # )
     
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     
@@ -68,7 +68,7 @@ def generate_launch_description():
             '-topic', 'robot_description',
             '-x', x_pose,
             '-y', y_pose,
-            '-z', '0.01',
+            '-z', '0.05',
             '-Y', '1.57'
         ],
         output='screen',
