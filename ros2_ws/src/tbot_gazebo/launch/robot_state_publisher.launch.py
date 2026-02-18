@@ -14,23 +14,10 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    # TBOT_MODEL = os.environ['TBOT_MODEL']
-    TBOT_MODEL = 'wf'
-    urdf_file_name = 'tbot_' + TBOT_MODEL + '.urdf'
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     frame_prefix = LaunchConfiguration('frame_prefix', default='')
 
-    print('urdf_file_name : {}'.format(urdf_file_name))
-
-    urdf_path = os.path.join(
-        get_package_share_directory('tbot_gazebo'),
-        'urdf',
-        urdf_file_name)
-
-    # with open(urdf_path, 'r') as infp:
-    #     robot_desc = infp.read()
-    
     robot_desc = ParameterValue(
         Command([
             PathJoinSubstitution([FindExecutable(name='xacro')]),

@@ -21,12 +21,7 @@ def generate_launch_description():
         launch_arguments=[('use_sim_time', LaunchConfiguration('use_sim_time'))]
     )
 
-    teleop_base_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            PathJoinSubstitution([tbot_control_share, 'launch', 'teleop_base.launch.py'])
-        ]),
-        launch_arguments=[('use_sim_time', LaunchConfiguration('use_sim_time'))]
-    )
+
 
     return LaunchDescription([
         declare_use_sim_time,
