@@ -1,5 +1,5 @@
 import math
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
@@ -14,7 +14,6 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from sensor_msgs.msg import Image, CameraInfo
-# Note: We do not need geometry_msgs/Pose2D here because we access it via BoundingBox2D
 from vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
@@ -25,11 +24,15 @@ from vision_msgs.msg import (
     Detection3D,
     Detection3DArray,
 )
+from visualization_msgs.msg import Marker, MarkerArray
+from builtin_interfaces.msg import Duration
 
 import torch
 from ultralytics import YOLO
 from ultralytics.engine.results import Results
 from ultralytics.engine.results import Boxes
+
+import numpy as np
 
 
 class YoloInferenceNode(Node):
@@ -95,8 +98,10 @@ class YoloInferenceNode(Node):
         self.pub_2d = self.create_publisher(Detection2DArray, 'detections_2d', 10)
         
         if self.enable_debug:
-            self.get_logger().info("Debug Mode Enabled: Publishing to ~/debug_image")
+            self.get_logger().info("Debug Mode Enabled: Publishing to ~/debug_image and ~/debug_markers_3d")
             self.pub_debug = self.create_publisher(Image, '~/debug_image', 10)
+            if self.enable_3d:
+                self.pub_markers = self.create_publisher(MarkerArray, '~/debug_markers_3d', 10)
 
         # --- Subscribers & 3D Setup ---
         if self.enable_3d:
@@ -107,7 +112,6 @@ class YoloInferenceNode(Node):
             
             self.pub_3d = self.create_publisher(Detection3DArray, 'detections_3d', 10)
             
-            # Use message_filters.Subscriber for synchronization
             self.image_sub = message_filters.Subscriber(
                 self, Image, '/camera/image_raw', qos_profile=self.image_qos_profile)
             self.depth_sub = message_filters.Subscriber(
@@ -122,7 +126,6 @@ class YoloInferenceNode(Node):
             
         else:
             self.get_logger().info("Mode: 2D (RGB Only)")
-            # Use standard subscription for simple 2D mode
             self.sub_2d = self.create_subscription(
                 Image, 
                 '/camera/image_raw', 
@@ -140,12 +143,10 @@ class YoloInferenceNode(Node):
         try:
             self.yolo_model = YOLO(model=self.model, task=self.task)
             
-            # Check CUDA availability to prevent crash
             if 'cuda' in self.device and not torch.cuda.is_available():
-                self.get_logger().warn(f"CUDA requested but not available! Fallback to CPU.")
+                self.get_logger().warn("CUDA requested but not available! Fallback to CPU.")
                 self.device = 'cpu'
             
-            # Move to device if using standard PyTorch model
             if self.model.endswith('.pt'):
                  self.yolo_model.to(self.device)
 
@@ -155,7 +156,6 @@ class YoloInferenceNode(Node):
             self.get_logger().error(f"CRITICAL: Failed to load YOLO model: {e}")
             raise e
         
-        # Fuse model for speed (PyTorch only)
         if self.fuse_model and self.model.endswith('.pt'):
             try:
                 self.get_logger().info("Fusing model layers for faster inference...")
@@ -163,7 +163,6 @@ class YoloInferenceNode(Node):
             except Exception as e:
                 self.get_logger().warn(f"Could not fuse model: {e}")
 
-        # Warmup
         try:
             self.get_logger().info("Warming up model...")
             dummy_input = torch.zeros((1, 3, self.imgsz_height, self.imgsz_width)).to(self.device)
@@ -171,14 +170,17 @@ class YoloInferenceNode(Node):
             self.get_logger().info("Warmup complete! System ready.")
         except Exception as e:
             self.get_logger().warn(f"Warmup failed (non-critical): {e}")
-        
 
     def init_3d(self):
-        self.declare_parameter("target_frame", "base_link")
+        self.declare_parameter("depth_image_units_divisor", 1000)
         self.declare_parameter("depth_reliability", QoSReliabilityPolicy.BEST_EFFORT)
         self.declare_parameter("depth_info_reliability", QoSReliabilityPolicy.BEST_EFFORT)
         
-        self.target_frame = self.get_parameter("target_frame").get_parameter_value().string_value
+        self.depth_image_units_divisor = (
+            self.get_parameter("depth_image_units_divisor")
+            .get_parameter_value()
+            .integer_value
+        )
         depth_reliability = self.get_parameter("depth_reliability").get_parameter_value().integer_value
         depth_info_reliability = self.get_parameter("depth_info_reliability").get_parameter_value().integer_value
         
@@ -210,7 +212,6 @@ class YoloInferenceNode(Node):
         if not self.enable:
             return
 
-        # 1. Convert Image
         try:
             cv_image = self.cv_bridge.imgmsg_to_cv2(
                 image_msg, desired_encoding=self.yolo_encoding
@@ -219,7 +220,6 @@ class YoloInferenceNode(Node):
             self.get_logger().error(f"CV Bridge conversion failed: {e}")
             return
         
-        # 2. Inference
         inference_results = self.yolo_model.predict(
             source=cv_image,
             verbose=False,
@@ -237,7 +237,6 @@ class YoloInferenceNode(Node):
         
         results: Results = inference_results[0].cpu()
 
-        # 3. Prepare ROS Messages
         detections_2d_msg = Detection2DArray()
         detections_2d_msg.header = image_msg.header
         
@@ -247,24 +246,10 @@ class YoloInferenceNode(Node):
 
         if results.boxes:
             hypothesis_list = self.parse_hypothesis(results)
-            boxes_2d_list = self.parse_boxes(results) # FIX IS INSIDE HERE
+            boxes_2d_list = self.parse_boxes(results) 
 
-            # Prepare for 3D calc
-            cv_depth = None
-            fx = fy = cx = cy = 0.0
-            if self.enable_3d and depth_msg and depth_info_msg:
-                try:
-                    cv_depth = self.cv_bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
-                    fx = depth_info_msg.k[0]
-                    cx = depth_info_msg.k[2]
-                    fy = depth_info_msg.k[4]
-                    cy = depth_info_msg.k[5]
-                except Exception as e:
-                    self.get_logger().error(f"Depth processing failed: {e}")
-
-            # Loop through detections
             for i in range(len(results.boxes)):
-                # --- 2D Detection ---
+                # --- 2D Detection Processing ---
                 det_2d = Detection2D()
                 det_2d.header = image_msg.header
                 det_2d.bbox = boxes_2d_list[i]
@@ -276,59 +261,97 @@ class YoloInferenceNode(Node):
                 det_2d.results.append(obj_hyp)
                 detections_2d_msg.detections.append(det_2d)
 
-                # --- 3D Detection ---
-                if self.enable_3d and cv_depth is not None:
-                    # Note: We now use center.position.x because of the fix
-                    u = int(boxes_2d_list[i].center.position.x)
-                    v = int(boxes_2d_list[i].center.position.y)
+                # --- 3D Detection Processing ---
+                if self.enable_3d and depth_msg is not None and depth_info_msg is not None:
+                    # Pass the correct arguments to the 3D conversion function
+                    det_3d_msg = self.convert_to_3d_bbox(depth_msg, depth_info_msg, det_2d)
                     
-                    height, width = cv_depth.shape
-                    
-                    if 0 <= u < width and 0 <= v < height:
-                        depth_val = cv_depth[v, u]
-                        
-                        # Handle typical depth encodings (mm vs meters)
-                        if "16UC1" in depth_msg.encoding:
-                            z = depth_val / 1000.0
-                        else:
-                            z = float(depth_val)
-                            
-                        if z > 0.0 and not math.isnan(z):
-                            det_3d = Detection3D()
-                            det_3d.header = image_msg.header
-                            
-                            # Pinhole Camera Model
-                            x = (u - cx) * z / fx
-                            y = (v - cy) * z / fy
-                            
-                            det_3d.bbox.center.position.x = x
-                            det_3d.bbox.center.position.y = y
-                            det_3d.bbox.center.position.z = z
-                            det_3d.bbox.center.orientation.w = 1.0
-                            
-                            det_3d.bbox.size.x = 0.5 # Placeholder size
-                            det_3d.bbox.size.y = 0.5
-                            det_3d.bbox.size.z = 0.5
-                            
-                            det_3d.results.append(obj_hyp)
-                            detections_3d_msg.detections.append(det_3d)
+                    if det_3d_msg is not None:
+                        det_3d_msg.header = image_msg.header
+                        # Append the hypothesis to the 3D message as well
+                        det_3d_msg.results.append(obj_hyp)
+                        detections_3d_msg.detections.append(det_3d_msg)
 
-        # 4. Publish
+        # Publish Results
         self.pub_2d.publish(detections_2d_msg)
-        if self.enable_3d and detections_3d_msg:
+        if self.enable_3d and detections_3d_msg is not None:
             self.pub_3d.publish(detections_3d_msg)
             
-        # 5. Publish Debug Image (If Enabled)
+        # Publish Debug Image & Markers (If Enabled)
         if self.enable_debug:
             try:
-                # Plot returns BGR numpy array
+                # Publish 2D annotated image
                 annotated_frame = results.plot()
                 debug_msg = self.cv_bridge.cv2_to_imgmsg(annotated_frame, encoding="bgr8")
                 debug_msg.header = image_msg.header
                 self.pub_debug.publish(debug_msg)
+                
+                # Publish 3D MarkerArray for RViz2
+                if self.enable_3d and detections_3d_msg is not None:
+                    marker_msg = self.create_marker_array(detections_3d_msg)
+                    self.pub_markers.publish(marker_msg)
+                    
             except Exception as e:
-                self.get_logger().error(f"Failed to publish debug image: {e}")
-        
+                self.get_logger().error(f"Failed to publish debug visualizations: {e}")
+
+    def create_marker_array(self, detections_3d_msg: Detection3DArray) -> MarkerArray:
+        marker_array = MarkerArray()
+        # Short lifetime so markers auto-delete if the object leaves the frame
+        lifetime = Duration(sec=0, nanosec=200_000_000) # 0.2 seconds
+
+        for i, det in enumerate(detections_3d_msg.detections):
+            # 1. Create the 3D Cube Marker
+            cube = Marker()
+            cube.header = det.header
+            cube.ns = "yolo_3d_boxes"
+            cube.id = i * 2  # Unique ID
+            cube.type = Marker.CUBE
+            cube.action = Marker.ADD
+            
+            cube.pose = det.bbox.center
+            cube.scale = det.bbox.size
+            
+            # Transparent Green
+            cube.color.r = 0.0
+            cube.color.g = 1.0
+            cube.color.b = 0.0
+            cube.color.a = 0.4 
+            cube.lifetime = lifetime
+            
+            marker_array.markers.append(cube)
+            
+            # 2. Create the Floating Text Marker (Class ID + Score)
+            if det.results:
+                text = Marker()
+                text.header = det.header
+                text.ns = "yolo_3d_labels"
+                text.id = (i * 2) + 1
+                text.type = Marker.TEXT_VIEW_FACING
+                text.action = Marker.ADD
+                
+                # Position text slightly above the 3D box
+                # Note: In optical frame, Y points DOWN, so we subtract to go UP
+                text.pose.position.x = det.bbox.center.position.x
+                text.pose.position.y = det.bbox.center.position.y - (det.bbox.size.y / 2.0) - 0.1
+                text.pose.position.z = det.bbox.center.position.z
+                
+                text.scale.z = 0.15 # Text height in meters
+                
+                # Solid White Text
+                text.color.r = 1.0
+                text.color.g = 1.0
+                text.color.b = 1.0
+                text.color.a = 1.0
+                
+                class_id = det.results[0].hypothesis.class_id
+                score = det.results[0].hypothesis.score
+                text.text = f"Class {class_id} ({score:.2f})"
+                text.lifetime = lifetime
+                
+                marker_array.markers.append(text)
+
+        return marker_array
+
     def parse_hypothesis(self, results: Results) -> List[Dict]:
         hypothesis_list = []
         if results.boxes:
@@ -343,25 +366,430 @@ class YoloInferenceNode(Node):
         return hypothesis_list
 
     def parse_boxes(self, results: Results) -> List[BoundingBox2D]:
-        
         boxes_list = []
         if results.boxes:
             for box_data in results.boxes:
                 msg = BoundingBox2D()
-
-                # xywh: center x, center y, width, height
                 box = box_data.xywh[0]
+                
                 msg.center.position.x = float(box[0])
                 msg.center.position.y = float(box[1])
                 msg.center.theta = 0.0 
                 
                 msg.size_x = float(box[2])
                 msg.size_y = float(box[3])
-
                 boxes_list.append(msg)
-
         return boxes_list
-    
+
+    def convert_to_3d_bbox(
+        self, 
+        depth_msg: Image, 
+        depth_info_msg: CameraInfo, 
+        det_2d_msg: Detection2D
+    ) -> Optional[Detection3D]:
+        try:
+            depth_image = self.cv_bridge.imgmsg_to_cv2(
+                depth_msg, desired_encoding="passthrough")
+        except Exception as e:
+            self.get_logger().error(f"Depth processing failed: {e}")
+            return None
+
+        center_x = det_2d_msg.bbox.center.position.x
+        center_y = det_2d_msg.bbox.center.position.y
+        size_x = det_2d_msg.bbox.size_x
+        size_y = det_2d_msg.bbox.size_y
+
+        u_min = max(int(center_x - size_x // 2), 0)
+        u_max = min(int(center_x + size_x // 2), depth_image.shape[1] - 1)
+        v_min = max(int(center_y - size_y // 2), 0)
+        v_max = min(int(center_y + size_y // 2), depth_image.shape[0] - 1)
+
+        if u_max <= u_min or v_max <= v_min:
+            return None
+
+        depth_roi = depth_image[v_min:v_max, u_min:u_max]
+
+        roi_h, roi_w = depth_roi.shape
+        y_grid, x_grid = np.meshgrid(
+            np.arange(roi_h) + v_min, np.arange(roi_w) + u_min, indexing="ij"
+        )
+        pixel_coords = np.column_stack([x_grid.flatten(), y_grid.flatten()])                    
+
+        if not np.any(np.isfinite(depth_roi)) or not np.any(depth_roi):
+            return None    
+
+        valid_depths = depth_roi.flatten()
+
+        try:
+            valid_depths = np.asarray(valid_depths, dtype=np.float64)
+            # CRITICAL FIX: Apply scaling divisor for standard 16-bit depth encodings
+            if depth_msg.encoding in ["16UC1", "mono16", "16SC1"]:
+                valid_depths = valid_depths / float(self.depth_image_units_divisor)
+        except (ValueError, TypeError):
+            return None
+
+        valid_mask = (valid_depths > 0) & np.isfinite(valid_depths)
+        valid_depths = valid_depths[valid_mask]
+        valid_coords = pixel_coords[valid_mask] 
+
+        if len(valid_depths) == 0:
+            return None
+        
+        spatial_weights = self._compute_spatial_weights(
+            valid_coords, center_x, center_y, size_x, size_y
+        )
+
+        z, z_min, z_max = self._compute_depth_bounds_weighted(
+            valid_depths, spatial_weights
+        )
+
+        if not np.isfinite(z) or z == 0:
+            return None
+
+        y_center, y_min, y_max = self._compute_height_bounds(
+            valid_coords, valid_depths, spatial_weights, depth_info_msg
+        )
+
+        if not all(np.isfinite([y_center, y_min, y_max])):
+            return None
+
+        x_center, x_min, x_max = self._compute_width_bounds(
+            valid_coords, valid_depths, spatial_weights, depth_info_msg
+        )
+
+        if not all(np.isfinite([x_center, x_min, x_max])):
+            return None
+
+        x = x_center
+        y = y_center
+        w = float(x_max - x_min)
+        h = float(y_max - y_min)
+
+        det_3d_msg = Detection3D()
+        det_3d_msg.bbox.center.position.x = x
+        det_3d_msg.bbox.center.position.y = y
+        det_3d_msg.bbox.center.position.z = z
+        det_3d_msg.bbox.center.orientation.w = 1.0
+        
+        det_3d_msg.bbox.size.x = w
+        det_3d_msg.bbox.size.y = h
+        det_3d_msg.bbox.size.z = float(z_max - z_min)
+        
+        return det_3d_msg
+
+    @staticmethod
+    def _compute_spatial_weights(
+        coords: np.ndarray, center_x: float, center_y: float, size_x: float, size_y: float
+    ) -> np.ndarray:
+        dx = (coords[:, 0] - center_x) / (size_x / 2 + 1e-6)
+        dy = (coords[:, 1] - center_y) / (size_y / 2 + 1e-6)
+        normalized_dist = np.sqrt(dx**2 + dy**2)
+
+        weights = np.exp(-0.5 * (normalized_dist / 0.8) ** 2)
+        weights = np.maximum(weights, 0.3)
+
+        return weights
+
+    @staticmethod
+    def _compute_depth_bounds_weighted(
+        depth_values: np.ndarray, spatial_weights: np.ndarray
+    ) -> Tuple[float, float, float]:
+        try:
+            depth_values = np.asarray(depth_values, dtype=np.float64)
+            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
+        except (ValueError, TypeError):
+            return 0.0, 0.0, 0.0
+
+        if len(depth_values) == 0:
+            return 0.0, 0.0, 0.0
+
+        valid_mask = np.isfinite(depth_values) & np.isfinite(spatial_weights)
+        depth_values = depth_values[valid_mask]
+        spatial_weights = spatial_weights[valid_mask]
+
+        if len(depth_values) == 0:
+            return 0.0, 0.0, 0.0
+
+        if len(depth_values) < 4:
+            z_center = float(np.median(depth_values))
+            return z_center, float(np.min(depth_values)), float(np.max(depth_values))
+
+        depth_range = np.ptp(depth_values)
+        if not np.isfinite(depth_range) or depth_range <= 0:
+            n_bins = 30
+        else:
+            n_bins = max(20, min(60, int(depth_range / 0.01)))
+
+        hist, bin_edges = np.histogram(depth_values, bins=n_bins, weights=spatial_weights)
+
+        if len(hist) >= 5:
+            kernel_size = min(5, len(hist) // 4)
+            kernel = np.ones(kernel_size) / kernel_size
+            hist_smooth = np.convolve(hist, kernel, mode="same")
+        else:
+            hist_smooth = hist
+
+        peak_bin_idx = np.argmax(hist_smooth)
+        mode_depth = (bin_edges[peak_bin_idx] + bin_edges[peak_bin_idx + 1]) / 2
+
+        deviations = np.abs(depth_values - mode_depth)
+        mad = np.median(deviations)
+
+        q25 = np.percentile(depth_values, 25)
+        q75 = np.percentile(depth_values, 75)
+        iqr = q75 - q25
+
+        if iqr < 0.03:
+            threshold = np.clip(3.5 * mad, 0.08, 0.30)
+        elif iqr < 0.10:
+            threshold = np.clip(4.0 * mad, 0.12, 0.40)
+        else:
+            threshold = np.clip(5.0 * mad, 0.15, 0.60)
+
+        object_mask = deviations <= threshold
+        object_depths = depth_values[object_mask]
+        object_weights = spatial_weights[object_mask]
+
+        min_points = max(6, int(len(depth_values) * 0.15))
+        if len(object_depths) < min_points:
+            sorted_idx = np.argsort(depth_values)
+            cumsum_weights = np.cumsum(spatial_weights[sorted_idx])
+            cumsum_weights /= cumsum_weights[-1]
+
+            p2_idx = np.searchsorted(cumsum_weights, 0.02)
+            p85_idx = np.searchsorted(cumsum_weights, 0.85)
+
+            p2_val = depth_values[sorted_idx[p2_idx]]
+            p85_val = depth_values[sorted_idx[p85_idx]]
+
+            object_mask = (depth_values >= p2_val) & (depth_values <= p85_val)
+            object_depths = depth_values[object_mask]
+            object_weights = spatial_weights[object_mask]
+
+        if len(object_depths) == 0:
+            object_depths = depth_values
+            object_weights = spatial_weights
+
+        if np.sum(object_weights) > 0:
+            sorted_idx = np.argsort(object_depths)
+            sorted_depths = object_depths[sorted_idx]
+            sorted_weights = object_weights[sorted_idx]
+
+            cumsum_weights = np.cumsum(sorted_weights)
+            cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+            trim_low_idx = np.searchsorted(cumsum_weights, 0.02)
+            trim_high_idx = np.searchsorted(cumsum_weights, 0.98)
+
+            if trim_high_idx > trim_low_idx:
+                trimmed_depths = sorted_depths[trim_low_idx:trim_high_idx]
+                trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
+
+                if np.sum(trimmed_weights) > 0:
+                    z_center = np.average(trimmed_depths, weights=trimmed_weights)
+                else:
+                    z_center = np.median(object_depths)
+            else:
+                z_center = np.average(object_depths, weights=object_weights)
+        else:
+            z_center = np.median(object_depths)
+
+        sorted_idx = np.argsort(object_depths)
+        cumsum_weights = np.cumsum(object_weights[sorted_idx])
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        p1_idx = np.searchsorted(cumsum_weights, 0.01)
+        p99_idx = np.searchsorted(cumsum_weights, 0.99)
+
+        z_min = object_depths[sorted_idx[p1_idx]]
+        z_max = object_depths[sorted_idx[p99_idx]]
+
+        if z_center < z_min or z_center > z_max:
+            depth_extent = max(z_max - z_min, 0.02)
+            z_min = z_center - depth_extent / 2
+            z_max = z_center + depth_extent / 2
+
+        min_depth_size = 0.02
+        if (z_max - z_min) < min_depth_size:
+            half_min = min_depth_size / 2
+            z_min = z_center - half_min
+            z_max = z_center + half_min
+
+        return float(z_center), float(z_min), float(z_max)
+
+    @staticmethod
+    def _compute_height_bounds(
+        valid_coords: np.ndarray,
+        valid_depths: np.ndarray,
+        spatial_weights: np.ndarray,
+        depth_info: CameraInfo,
+    ) -> Tuple[float, float, float]:
+        try:
+            valid_depths = np.asarray(valid_depths, dtype=np.float64)
+            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
+        except (ValueError, TypeError):
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) == 0 or len(valid_depths) == 0:
+            return 0.0, 0.0, 0.0
+
+        k = depth_info.k
+        py, fy = k[5], k[4]
+
+        if fy == 0 or not np.all(np.isfinite(valid_depths)):
+            return 0.0, 0.0, 0.0
+
+        y_coords_pixel = valid_coords[:, 1]
+        y_3d = valid_depths * (y_coords_pixel - py) / fy
+
+        if not np.any(np.isfinite(y_3d)):
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) < 4:
+            return float(np.median(y_3d)), float(np.min(y_3d)), float(np.max(y_3d))
+
+        sorted_idx = np.argsort(y_3d)
+        sorted_y = y_3d[sorted_idx]
+        sorted_weights = spatial_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+        median_idx = np.searchsorted(cumsum_weights, 0.5)
+        y_median = sorted_y[median_idx]
+
+        deviations = np.abs(y_3d - y_median)
+        mad = np.median(deviations)
+
+        threshold = np.clip(4.5 * mad, 0.06, 0.50)
+        valid_mask = deviations <= threshold
+        filtered_y = y_3d[valid_mask]
+        filtered_weights = spatial_weights[valid_mask]
+
+        if len(filtered_y) < max(4, len(y_3d) * 0.12):
+            filtered_y = y_3d
+            filtered_weights = spatial_weights
+
+        sorted_idx = np.argsort(filtered_y)
+        sorted_y = filtered_y[sorted_idx]
+        sorted_weights = filtered_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        trim_low_idx = np.searchsorted(cumsum_weights, 0.05)
+        trim_high_idx = np.searchsorted(cumsum_weights, 0.95)
+
+        if trim_high_idx > trim_low_idx:
+            trimmed_y = sorted_y[trim_low_idx:trim_high_idx]
+            trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
+            if np.sum(trimmed_weights) > 0:
+                y_center = np.average(trimmed_y, weights=trimmed_weights)
+            else:
+                y_center = np.median(filtered_y)
+        else:
+            y_center = np.median(filtered_y)
+
+        p3_idx = np.searchsorted(cumsum_weights, 0.03)
+        p97_idx = np.searchsorted(cumsum_weights, 0.97)
+
+        y_min = sorted_y[p3_idx]
+        y_max = sorted_y[p97_idx]
+
+        min_height = 0.02
+        if (y_max - y_min) < min_height:
+            half_min = min_height / 2
+            y_min = y_center - half_min
+            y_max = y_center + half_min
+
+        return float(y_center), float(y_min), float(y_max)
+
+    @staticmethod
+    def _compute_width_bounds(
+        valid_coords: np.ndarray,
+        valid_depths: np.ndarray,
+        spatial_weights: np.ndarray,
+        depth_info: CameraInfo,
+    ) -> Tuple[float, float, float]:
+        try:
+            valid_depths = np.asarray(valid_depths, dtype=np.float64)
+            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
+        except (ValueError, TypeError):
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) == 0 or len(valid_depths) == 0:
+            return 0.0, 0.0, 0.0
+
+        k = depth_info.k
+        px, fx = k[2], k[0]
+
+        if fx == 0 or not np.all(np.isfinite(valid_depths)):
+            return 0.0, 0.0, 0.0
+
+        x_coords_pixel = valid_coords[:, 0]
+        x_3d = valid_depths * (x_coords_pixel - px) / fx
+
+        if not np.any(np.isfinite(x_3d)):
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) < 4:
+            return float(np.median(x_3d)), float(np.min(x_3d)), float(np.max(x_3d))
+
+        sorted_idx = np.argsort(x_3d)
+        sorted_x = x_3d[sorted_idx]
+        sorted_weights = spatial_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+        median_idx = np.searchsorted(cumsum_weights, 0.5)
+        x_median = sorted_x[median_idx]
+
+        deviations = np.abs(x_3d - x_median)
+        mad = np.median(deviations)
+
+        depth_std = np.std(valid_depths)
+        if depth_std > 0.15:
+            threshold = np.clip(4.0 * mad, 0.06, 0.40)
+        else:
+            threshold = np.clip(4.5 * mad, 0.08, 0.50)
+
+        valid_mask = deviations <= threshold
+        filtered_x = x_3d[valid_mask]
+        filtered_weights = spatial_weights[valid_mask]
+
+        if len(filtered_x) < max(4, len(x_3d) * 0.12):
+            filtered_x = x_3d
+            filtered_weights = spatial_weights
+
+        sorted_idx = np.argsort(filtered_x)
+        sorted_x = filtered_x[sorted_idx]
+        sorted_weights = filtered_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        trim_low_idx = np.searchsorted(cumsum_weights, 0.05)
+        trim_high_idx = np.searchsorted(cumsum_weights, 0.95)
+
+        if trim_high_idx > trim_low_idx:
+            trimmed_x = sorted_x[trim_low_idx:trim_high_idx]
+            trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
+            if np.sum(trimmed_weights) > 0:
+                x_center = np.average(trimmed_x, weights=trimmed_weights)
+            else:
+                x_center = np.median(filtered_x)
+        else:
+            x_center = np.median(filtered_x)
+
+        p3_idx = np.searchsorted(cumsum_weights, 0.03)
+        p97_idx = np.searchsorted(cumsum_weights, 0.97)
+
+        x_min = sorted_x[p3_idx]
+        x_max = sorted_x[p97_idx]
+
+        min_width = 0.02
+        if (x_max - x_min) < min_width:
+            half_min = min_width / 2
+            x_min = x_center - half_min
+            x_max = x_center + half_min
+
+        return float(x_center), float(x_min), float(x_max)
+
 
 def main(args=None):
     rclpy.init(args=args)
