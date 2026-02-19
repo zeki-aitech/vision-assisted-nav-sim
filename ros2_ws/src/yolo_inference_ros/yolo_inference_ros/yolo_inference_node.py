@@ -343,9 +343,7 @@ class YoloInferenceNode(Node):
         return hypothesis_list
 
     def parse_boxes(self, results: Results) -> List[BoundingBox2D]:
-        """
-        FIXED: Updated to use vision_msgs/Pose2D structure (center.position.x)
-        """
+        
         boxes_list = []
         if results.boxes:
             for box_data in results.boxes:
@@ -353,9 +351,6 @@ class YoloInferenceNode(Node):
 
                 # xywh: center x, center y, width, height
                 box = box_data.xywh[0]
-                
-                # --- CRITICAL FIX HERE ---
-                # In ROS 2 vision_msgs, 'center' is a Pose2D, which contains 'position'
                 msg.center.position.x = float(box[0])
                 msg.center.position.y = float(box[1])
                 msg.center.theta = 0.0 
