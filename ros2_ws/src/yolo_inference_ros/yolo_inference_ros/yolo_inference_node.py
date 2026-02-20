@@ -7,6 +7,7 @@ from rclpy.qos import QoSProfile
 from rclpy.qos import QoSHistoryPolicy
 from rclpy.qos import QoSDurabilityPolicy
 from rclpy.qos import QoSReliabilityPolicy
+from rclpy.duration import Duration
 
 import message_filters
 from cv_bridge import CvBridge
@@ -23,14 +24,13 @@ from vision_msgs.msg import (
     BoundingBox3D,
     Detection3D,
     Detection3DArray,
+    LabelInfo, VisionClass
 )
 from visualization_msgs.msg import Marker, MarkerArray
-from builtin_interfaces.msg import Duration
 
 import torch
 from ultralytics import YOLO
 from ultralytics.engine.results import Results
-from ultralytics.engine.results import Boxes
 
 import numpy as np
 
@@ -96,6 +96,13 @@ class YoloInferenceNode(Node):
 
         # --- Publishers ---
         self.pub_2d = self.create_publisher(Detection2DArray, 'detections_2d', 10)
+        latch_qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST
+        )
+        self.pub_label_info = self.create_publisher(LabelInfo, 'labels', latch_qos)
         
         if self.enable_debug:
             self.get_logger().info("Debug Mode Enabled: Publishing to ~/debug_image and ~/debug_markers_3d")
@@ -135,6 +142,8 @@ class YoloInferenceNode(Node):
         
         # --- Initialize Model ---
         self.init_yolo_model()
+        self.publish_label_info()
+        
         self.get_logger().info('YoloInferenceNode initialized')
         
     def init_yolo_model(self):
@@ -196,6 +205,28 @@ class YoloInferenceNode(Node):
             durability=QoSDurabilityPolicy.VOLATILE,
             depth=1,
         )
+
+    def publish_label_info(self):
+        """
+        Publish the dictionary mapping of class IDs to Class names.
+        Published once using Transient Local QoS.
+        """
+        msg = LabelInfo()
+        # Note: If no image has arrived yet, clock will be current time
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "yolo_model" # Generic frame for info
+        
+        # Populate the class mapping from the loaded YOLO model
+        for cls_id, cls_name in self.yolo_model.names.items():
+            vc = VisionClass()
+            vc.class_id = int(cls_id)
+            vc.class_name = str(cls_name)
+            msg.class_map.append(vc)
+            
+        msg.threshold = float(self.threshold)
+        
+        self.pub_label_info.publish(msg)
+        self.get_logger().info(f"Published LabelInfo mapping for {len(self.yolo_model.names)} classes to /labels")
         
     def callback_2d(self, image_msg: Image):
         self._process_data(image_msg)
@@ -263,12 +294,10 @@ class YoloInferenceNode(Node):
 
                 # --- 3D Detection Processing ---
                 if self.enable_3d and depth_msg is not None and depth_info_msg is not None:
-                    # Pass the correct arguments to the 3D conversion function
                     det_3d_msg = self.convert_to_3d_bbox(depth_msg, depth_info_msg, det_2d)
                     
                     if det_3d_msg is not None:
                         det_3d_msg.header = image_msg.header
-                        # Append the hypothesis to the 3D message as well
                         det_3d_msg.results.append(obj_hyp)
                         detections_3d_msg.detections.append(det_3d_msg)
 
@@ -280,77 +309,96 @@ class YoloInferenceNode(Node):
         # Publish Debug Image & Markers (If Enabled)
         if self.enable_debug:
             try:
-                # Publish 2D annotated image
+                # 1. Publish Annotated 2D Image
                 annotated_frame = results.plot()
                 debug_msg = self.cv_bridge.cv2_to_imgmsg(annotated_frame, encoding="bgr8")
                 debug_msg.header = image_msg.header
                 self.pub_debug.publish(debug_msg)
                 
-                # Publish 3D MarkerArray for RViz2
+                # 2. Publish 3D Markers to RViz2
                 if self.enable_3d and detections_3d_msg is not None:
-                    marker_msg = self.create_marker_array(detections_3d_msg)
-                    self.pub_markers.publish(marker_msg)
+                    marker_array = MarkerArray()
+                    for i, det_3d in enumerate(detections_3d_msg.detections):
+                        # Create box and text markers, extend the array
+                        new_markers = self.create_bb_markers(det_3d, color=(0, 255, 0), base_id=i)
+                        marker_array.markers.extend(new_markers)
+                    self.pub_markers.publish(marker_array)
                     
             except Exception as e:
                 self.get_logger().error(f"Failed to publish debug visualizations: {e}")
 
-    def create_marker_array(self, detections_3d_msg: Detection3DArray) -> MarkerArray:
-        marker_array = MarkerArray()
-        # Short lifetime so markers auto-delete if the object leaves the frame
-        lifetime = Duration(sec=0, nanosec=200_000_000) # 0.2 seconds
+    def create_bb_markers(self, detection: Detection3D, color: Tuple[int, int, int], base_id: int) -> List[Marker]:
+        """
+        Create a 3D bounding box AND a text label for RViz visualization.
+        """
+        markers = []
+        bbox = detection.bbox
+        lifetime = Duration(seconds=0.5).to_msg()
 
-        for i, det in enumerate(detections_3d_msg.detections):
-            # 1. Create the 3D Cube Marker
-            cube = Marker()
-            cube.header = det.header
-            cube.ns = "yolo_3d_boxes"
-            cube.id = i * 2  # Unique ID
-            cube.type = Marker.CUBE
-            cube.action = Marker.ADD
-            
-            cube.pose = det.bbox.center
-            cube.scale = det.bbox.size
-            
-            # Transparent Green
-            cube.color.r = 0.0
-            cube.color.g = 1.0
-            cube.color.b = 0.0
-            cube.color.a = 0.4 
-            cube.lifetime = lifetime
-            
-            marker_array.markers.append(cube)
-            
-            # 2. Create the Floating Text Marker (Class ID + Score)
-            if det.results:
-                text = Marker()
-                text.header = det.header
-                text.ns = "yolo_3d_labels"
-                text.id = (i * 2) + 1
-                text.type = Marker.TEXT_VIEW_FACING
-                text.action = Marker.ADD
-                
-                # Position text slightly above the 3D box
-                # Note: In optical frame, Y points DOWN, so we subtract to go UP
-                text.pose.position.x = det.bbox.center.position.x
-                text.pose.position.y = det.bbox.center.position.y - (det.bbox.size.y / 2.0) - 0.1
-                text.pose.position.z = det.bbox.center.position.z
-                
-                text.scale.z = 0.15 # Text height in meters
-                
-                # Solid White Text
-                text.color.r = 1.0
-                text.color.g = 1.0
-                text.color.b = 1.0
-                text.color.a = 1.0
-                
-                class_id = det.results[0].hypothesis.class_id
-                score = det.results[0].hypothesis.score
-                text.text = f"Class {class_id} ({score:.2f})"
-                text.lifetime = lifetime
-                
-                marker_array.markers.append(text)
+        # ---------------------------
+        # 1. Box Marker (CUBE)
+        # ---------------------------
+        box_marker = Marker()
+        box_marker.header = detection.header
+        box_marker.ns = "yolo_3d_boxes"
+        box_marker.id = base_id * 2  # Evens for boxes
+        box_marker.type = Marker.CUBE
+        box_marker.action = Marker.ADD
+        box_marker.frame_locked = False
 
-        return marker_array
+        box_marker.pose.position.x = bbox.center.position.x
+        box_marker.pose.position.y = bbox.center.position.y
+        box_marker.pose.position.z = bbox.center.position.z
+        
+        box_marker.pose.orientation.x = bbox.center.orientation.x
+        box_marker.pose.orientation.y = bbox.center.orientation.y
+        box_marker.pose.orientation.z = bbox.center.orientation.z
+        box_marker.pose.orientation.w = bbox.center.orientation.w
+        
+        box_marker.scale.x = bbox.size.x
+        box_marker.scale.y = bbox.size.y
+        box_marker.scale.z = bbox.size.z
+
+        box_marker.color.r = color[0] / 255.0
+        box_marker.color.g = color[1] / 255.0
+        box_marker.color.b = color[2] / 255.0
+        box_marker.color.a = 0.4
+        box_marker.lifetime = lifetime
+
+        markers.append(box_marker)
+
+        # ---------------------------
+        # 2. Text Marker (TEXT_VIEW_FACING)
+        # ---------------------------
+        if detection.results:
+            text_marker = Marker()
+            text_marker.header = detection.header
+            text_marker.ns = "yolo_3d_labels"
+            text_marker.id = (base_id * 2) + 1  # Odds for text
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.action = Marker.ADD
+            text_marker.frame_locked = False
+
+            text_marker.pose.position.x = bbox.center.position.x
+            text_marker.pose.position.y = bbox.center.position.y - (bbox.size.y / 2.0) - 0.1
+            text_marker.pose.position.z = bbox.center.position.z
+            
+            text_marker.scale.z = 0.15 
+            
+            text_marker.color.r = 1.0
+            text_marker.color.g = 1.0
+            text_marker.color.b = 1.0
+            text_marker.color.a = 1.0
+            
+            class_id = detection.results[0].hypothesis.class_id
+            class_name = self.yolo_model.names[int(class_id)]
+            score = detection.results[0].hypothesis.score
+            text_marker.text = f"{class_name}-{class_id}-({score:.2f})"
+            
+            text_marker.lifetime = lifetime
+            markers.append(text_marker)
+
+        return markers
 
     def parse_hypothesis(self, results: Results) -> List[Dict]:
         hypothesis_list = []
@@ -422,7 +470,6 @@ class YoloInferenceNode(Node):
 
         try:
             valid_depths = np.asarray(valid_depths, dtype=np.float64)
-            # CRITICAL FIX: Apply scaling divisor for standard 16-bit depth encodings
             if depth_msg.encoding in ["16UC1", "mono16", "16SC1"]:
                 valid_depths = valid_depths / float(self.depth_image_units_divisor)
         except (ValueError, TypeError):
@@ -479,21 +526,340 @@ class YoloInferenceNode(Node):
 
     @staticmethod
     def _compute_spatial_weights(
-        coords: np.ndarray, center_x: float, center_y: float, size_x: float, size_y: float
+        coords: np.ndarray, center_x: int, center_y: int, size_x: int, size_y: int
     ) -> np.ndarray:
+        """
+        Compute spatial weights for depth values based on distance from 2D bbox center.
+        Pixels near the center get higher weight to handle occlusions better.
+
+        Args:
+            coords: Nx2 array of pixel coordinates [x, y]
+            center_x: X coordinate of bbox center
+            center_y: Y coordinate of bbox center
+            size_x: Width of bbox
+            size_y: Height of bbox
+
+        Returns:
+            Array of weights (0-1) for each coordinate
+        """
+        # Compute normalized distance from center
         dx = (coords[:, 0] - center_x) / (size_x / 2 + 1e-6)
         dy = (coords[:, 1] - center_y) / (size_y / 2 + 1e-6)
         normalized_dist = np.sqrt(dx**2 + dy**2)
 
+        # Use Gaussian-like weighting: higher weight at center, lower at edges
+        # sigma = 0.8 means ~80% of bbox radius has high weight
         weights = np.exp(-0.5 * (normalized_dist / 0.8) ** 2)
+
+        # Ensure minimum weight of 0.3 to not completely ignore edge pixels
         weights = np.maximum(weights, 0.3)
 
         return weights
 
     @staticmethod
+    def _compute_height_bounds(
+        valid_coords: np.ndarray,
+        valid_depths: np.ndarray,
+        spatial_weights: np.ndarray,
+        depth_info: CameraInfo,
+    ) -> Tuple[float, float, float]:
+        """
+        Compute 3D height (y-axis) statistics from valid depth points.
+        Uses actual 3D point positions instead of just projecting 2D bbox.
+
+        Args:
+            valid_coords: Nx2 array of pixel coordinates [x, y]
+            valid_depths: N array of depth values in meters
+            spatial_weights: N array of spatial weights
+            depth_info: Camera intrinsic parameters
+
+        Returns:
+            Tuple of (y_center, y_min, y_max) in meters
+        """
+        # Input validations
+        try:
+            valid_depths = np.asarray(valid_depths, dtype=np.float64)
+            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
+        except (ValueError, TypeError):
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) == 0 or len(valid_depths) == 0:
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) < 4:
+            # Fallback: just use simple projection
+            k = depth_info.k
+            py, fy = k[5], k[4]
+
+            # Validate camera parameters
+            if fy == 0:
+                return 0.0, 0.0, 0.0
+
+            # Validate depths are finite
+            if not np.all(np.isfinite(valid_depths)):
+                return 0.0, 0.0, 0.0
+
+            y_coords_pixel = valid_coords[:, 1]
+            y_3d = valid_depths * (y_coords_pixel - py) / fy
+
+            # Validate result
+            if not np.all(np.isfinite(y_3d)):
+                return 0.0, 0.0, 0.0
+
+            return float(np.median(y_3d)), float(np.min(y_3d)), float(np.max(y_3d))
+
+        # Convert pixel coordinates to 3D y-coordinates
+        k = depth_info.k
+        py, fy = k[5], k[4]
+
+        # Validate camera parameters
+        if fy == 0:
+            return 0.0, 0.0, 0.0
+
+        # Validate depths are finite before calculation
+        if not np.all(np.isfinite(valid_depths)):
+            return 0.0, 0.0, 0.0
+
+        y_coords_pixel = valid_coords[:, 1]
+        y_3d = valid_depths * (y_coords_pixel - py) / fy
+
+        # Validate result
+        if not np.any(np.isfinite(y_3d)):
+            return 0.0, 0.0, 0.0
+
+        # Filter outliers using robust statistics
+        # Compute weighted median as reference
+        sorted_idx = np.argsort(y_3d)
+        sorted_y = y_3d[sorted_idx]
+        sorted_weights = spatial_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+        median_idx = np.searchsorted(cumsum_weights, 0.5)
+        y_median = sorted_y[median_idx]
+
+        # Compute MAD (Median Absolute Deviation)
+        deviations = np.abs(y_3d - y_median)
+        mad = np.median(deviations)
+
+        # Filter outliers: keep points within 4.5*MAD from median
+        # Balanced threshold to handle tall objects while avoiding background
+        threshold = np.clip(4.5 * mad, 0.06, 0.50)
+        valid_mask = deviations <= threshold
+        filtered_y = y_3d[valid_mask]
+        filtered_weights = spatial_weights[valid_mask]
+
+        # Ensure we have enough points (at least 12% of data)
+        if len(filtered_y) < max(4, len(y_3d) * 0.12):
+            filtered_y = y_3d
+            filtered_weights = spatial_weights
+
+        # Compute weighted center using trimmed mean
+        sorted_idx = np.argsort(filtered_y)
+        sorted_y = filtered_y[sorted_idx]
+        sorted_weights = filtered_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        # Trim 5% from each end for robust center estimation
+        trim_low_idx = np.searchsorted(cumsum_weights, 0.05)
+        trim_high_idx = np.searchsorted(cumsum_weights, 0.95)
+
+        if trim_high_idx > trim_low_idx:
+            trimmed_y = sorted_y[trim_low_idx:trim_high_idx]
+            trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
+            if np.sum(trimmed_weights) > 0:
+                y_center = np.average(trimmed_y, weights=trimmed_weights)
+            else:
+                y_center = np.median(filtered_y)
+        else:
+            y_center = np.median(filtered_y)
+
+        # Compute extent using balanced percentiles (3rd and 97th)
+        # Good balance between capturing object extent and avoiding outliers
+        sorted_idx = np.argsort(filtered_y)
+        sorted_y = filtered_y[sorted_idx]
+        sorted_weights = filtered_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        p3_idx = np.searchsorted(cumsum_weights, 0.03)
+        p97_idx = np.searchsorted(cumsum_weights, 0.97)
+
+        y_min = sorted_y[p3_idx]
+        y_max = sorted_y[p97_idx]
+
+        # Ensure minimum height of 2cm
+        min_height = 0.02
+        if (y_max - y_min) < min_height:
+            half_min = min_height / 2
+            y_min = y_center - half_min
+            y_max = y_center + half_min
+
+        return float(y_center), float(y_min), float(y_max)
+
+    @staticmethod
+    def _compute_width_bounds(
+        valid_coords: np.ndarray,
+        valid_depths: np.ndarray,
+        spatial_weights: np.ndarray,
+        depth_info: CameraInfo,
+    ) -> Tuple[float, float, float]:
+        """
+        Compute 3D width (x-axis) statistics from valid depth points.
+        Uses actual 3D point positions instead of just projecting 2D bbox.
+
+        Args:
+            valid_coords: Nx2 array of pixel coordinates [x, y]
+            valid_depths: N array of depth values in meters
+            spatial_weights: N array of spatial weights
+            depth_info: Camera intrinsic parameters
+
+        Returns:
+            Tuple of (x_center, x_min, x_max) in meters
+        """
+        # Input validations
+        try:
+            valid_depths = np.asarray(valid_depths, dtype=np.float64)
+            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
+        except (ValueError, TypeError):
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) == 0 or len(valid_depths) == 0:
+            return 0.0, 0.0, 0.0
+
+        if len(valid_coords) < 4:
+            # Fallback: just use simple projection
+            k = depth_info.k
+            px, fx = k[2], k[0]
+
+            # Validate camera parameters
+            if fx == 0:
+                return 0.0, 0.0, 0.0
+
+            # Validate depths are finite
+            if not np.all(np.isfinite(valid_depths)):
+                return 0.0, 0.0, 0.0
+
+            x_coords_pixel = valid_coords[:, 0]
+            x_3d = valid_depths * (x_coords_pixel - px) / fx
+
+            # Validate result
+            if not np.all(np.isfinite(x_3d)):
+                return 0.0, 0.0, 0.0
+
+            return float(np.median(x_3d)), float(np.min(x_3d)), float(np.max(x_3d))
+
+        # Convert pixel coordinates to 3D x-coordinates
+        k = depth_info.k
+        px, fx = k[2], k[0]
+
+        # Validate camera parameters
+        if fx == 0:
+            return 0.0, 0.0, 0.0
+
+        # Validate depths are finite before calculation
+        if not np.all(np.isfinite(valid_depths)):
+            return 0.0, 0.0, 0.0
+
+        x_coords_pixel = valid_coords[:, 0]
+        x_3d = valid_depths * (x_coords_pixel - px) / fx
+
+        # Validate result
+        if not np.any(np.isfinite(x_3d)):
+            return 0.0, 0.0, 0.0
+
+        # Filter outliers using robust statistics
+        # Compute weighted median as reference
+        sorted_idx = np.argsort(x_3d)
+        sorted_x = x_3d[sorted_idx]
+        sorted_weights = spatial_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+        median_idx = np.searchsorted(cumsum_weights, 0.5)
+        x_median = sorted_x[median_idx]
+
+        # Compute MAD (Median Absolute Deviation)
+        deviations = np.abs(x_3d - x_median)
+        mad = np.median(deviations)
+
+        # Adaptive threshold based on depth variance (helps with occlusions)
+        # Check if object has varying depth (might indicate occlusion)
+        depth_std = np.std(valid_depths)
+        if depth_std > 0.15:  # High depth variation - likely occlusion or 3D object
+            # Use tighter threshold to avoid including background
+            threshold = np.clip(4.0 * mad, 0.06, 0.40)
+        else:  # Uniform depth - flat object
+            # Can be more permissive
+            threshold = np.clip(4.5 * mad, 0.08, 0.50)
+
+        valid_mask = deviations <= threshold
+        filtered_x = x_3d[valid_mask]
+        filtered_weights = spatial_weights[valid_mask]
+
+        # Ensure we have enough points (at least 12% of data)
+        if len(filtered_x) < max(4, len(x_3d) * 0.12):
+            filtered_x = x_3d
+            filtered_weights = spatial_weights
+
+        # Compute weighted center using trimmed mean
+        sorted_idx = np.argsort(filtered_x)
+        sorted_x = filtered_x[sorted_idx]
+        sorted_weights = filtered_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        # Trim 5% from each end for robust center estimation
+        trim_low_idx = np.searchsorted(cumsum_weights, 0.05)
+        trim_high_idx = np.searchsorted(cumsum_weights, 0.95)
+
+        if trim_high_idx > trim_low_idx:
+            trimmed_x = sorted_x[trim_low_idx:trim_high_idx]
+            trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
+            if np.sum(trimmed_weights) > 0:
+                x_center = np.average(trimmed_x, weights=trimmed_weights)
+            else:
+                x_center = np.median(filtered_x)
+        else:
+            x_center = np.median(filtered_x)
+
+        # Compute extent using balanced percentiles (3rd and 97th)
+        # Good balance between capturing object extent and avoiding outliers
+        sorted_idx = np.argsort(filtered_x)
+        sorted_x = filtered_x[sorted_idx]
+        sorted_weights = filtered_weights[sorted_idx]
+        cumsum_weights = np.cumsum(sorted_weights)
+        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
+
+        p3_idx = np.searchsorted(cumsum_weights, 0.03)
+        p97_idx = np.searchsorted(cumsum_weights, 0.97)
+
+        x_min = sorted_x[p3_idx]
+        x_max = sorted_x[p97_idx]
+
+        # Ensure minimum width of 2cm
+        min_width = 0.02
+        if (x_max - x_min) < min_width:
+            half_min = min_width / 2
+            x_min = x_center - half_min
+            x_max = x_center + half_min
+
+        return float(x_center), float(x_min), float(x_max)
+
+    @staticmethod
     def _compute_depth_bounds_weighted(
         depth_values: np.ndarray, spatial_weights: np.ndarray
     ) -> Tuple[float, float, float]:
+        """
+        Compute robust depth statistics with spatial weighting to handle occlusions.
+
+        Args:
+            depth_values: 1D array of valid depth values (> 0)
+            spatial_weights: 1D array of spatial weights (0-1) for each depth
+
+        Returns:
+            Tuple of (z_center, z_min, z_max) representing the object's depth
+        """
+        # Input validations
         try:
             depth_values = np.asarray(depth_values, dtype=np.float64)
             spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
@@ -503,6 +869,7 @@ class YoloInferenceNode(Node):
         if len(depth_values) == 0:
             return 0.0, 0.0, 0.0
 
+        # Validate that all values are finite
         valid_mask = np.isfinite(depth_values) & np.isfinite(spatial_weights)
         depth_values = depth_values[valid_mask]
         spatial_weights = spatial_weights[valid_mask]
@@ -514,48 +881,66 @@ class YoloInferenceNode(Node):
             z_center = float(np.median(depth_values))
             return z_center, float(np.min(depth_values)), float(np.max(depth_values))
 
+        # Step 1: Multi-scale histogram analysis for robust mode detection
         depth_range = np.ptp(depth_values)
         if not np.isfinite(depth_range) or depth_range <= 0:
             n_bins = 30
         else:
             n_bins = max(20, min(60, int(depth_range / 0.01)))
 
+        # Create weighted histogram
         hist, bin_edges = np.histogram(depth_values, bins=n_bins, weights=spatial_weights)
 
+        # Smooth histogram to reduce noise while preserving peaks
         if len(hist) >= 5:
+            # Simple moving average smoothing
             kernel_size = min(5, len(hist) // 4)
             kernel = np.ones(kernel_size) / kernel_size
             hist_smooth = np.convolve(hist, kernel, mode="same")
         else:
             hist_smooth = hist
 
+        # Find peak (mode) - highest weighted density region
         peak_bin_idx = np.argmax(hist_smooth)
         mode_depth = (bin_edges[peak_bin_idx] + bin_edges[peak_bin_idx + 1]) / 2
 
+        # Step 2: Adaptive outlier filtering with less aggressive thresholds
         deviations = np.abs(depth_values - mode_depth)
+
+        # Compute robust MAD without inverse weighting to avoid over-filtering
         mad = np.median(deviations)
 
+        # More permissive threshold - adjust based on object size and uniformity
+        # Check depth distribution uniformity
         q25 = np.percentile(depth_values, 25)
         q75 = np.percentile(depth_values, 75)
         iqr = q75 - q25
 
-        if iqr < 0.03:
+        # Adaptive threshold: looser for varied depth, tighter for uniform
+        if iqr < 0.03:  # Very uniform depth (<3cm IQR)
+            # For flat objects, use tighter bounds
             threshold = np.clip(3.5 * mad, 0.08, 0.30)
-        elif iqr < 0.10:
+        elif iqr < 0.10:  # Moderate variation (<10cm IQR)
+            # Standard threshold
             threshold = np.clip(4.0 * mad, 0.12, 0.40)
-        else:
+        else:  # High variation (>10cm IQR)
+            # For complex 3D objects, use very permissive bounds
             threshold = np.clip(5.0 * mad, 0.15, 0.60)
 
+        # Keep depths within threshold
         object_mask = deviations <= threshold
         object_depths = depth_values[object_mask]
         object_weights = spatial_weights[object_mask]
 
-        min_points = max(6, int(len(depth_values) * 0.15))
+        # Fallback if filtering was too aggressive
+        min_points = max(6, int(len(depth_values) * 0.15))  # Keep at least 15% of points
         if len(object_depths) < min_points:
+            # Use weighted percentiles with wider range
             sorted_idx = np.argsort(depth_values)
             cumsum_weights = np.cumsum(spatial_weights[sorted_idx])
             cumsum_weights /= cumsum_weights[-1]
 
+            # Find 2nd and 85th weighted percentiles (wider range)
             p2_idx = np.searchsorted(cumsum_weights, 0.02)
             p85_idx = np.searchsorted(cumsum_weights, 0.85)
 
@@ -570,7 +955,9 @@ class YoloInferenceNode(Node):
             object_depths = depth_values
             object_weights = spatial_weights
 
+        # Step 3: Compute robust weighted center using trimmed mean
         if np.sum(object_weights) > 0:
+            # Use weighted average, but trim extreme 2% on each side first
             sorted_idx = np.argsort(object_depths)
             sorted_depths = object_depths[sorted_idx]
             sorted_weights = object_weights[sorted_idx]
@@ -578,6 +965,7 @@ class YoloInferenceNode(Node):
             cumsum_weights = np.cumsum(sorted_weights)
             cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
 
+            # Trim 2% from each end
             trim_low_idx = np.searchsorted(cumsum_weights, 0.02)
             trim_high_idx = np.searchsorted(cumsum_weights, 0.98)
 
@@ -594,201 +982,36 @@ class YoloInferenceNode(Node):
         else:
             z_center = np.median(object_depths)
 
+        # Step 4: Compute extent using balanced weighted percentiles
         sorted_idx = np.argsort(object_depths)
         cumsum_weights = np.cumsum(object_weights[sorted_idx])
         cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
 
+        # Use 1st and 99th percentiles for depth (slightly more coverage than width/height)
         p1_idx = np.searchsorted(cumsum_weights, 0.01)
         p99_idx = np.searchsorted(cumsum_weights, 0.99)
 
         z_min = object_depths[sorted_idx[p1_idx]]
         z_max = object_depths[sorted_idx[p99_idx]]
 
+        # Validate and adjust bounds relative to center
+        # Ensure center is within bounds (sanity check)
         if z_center < z_min or z_center > z_max:
-            depth_extent = max(z_max - z_min, 0.02)
+            # Recompute bounds symmetrically around center
+            depth_extent = max(z_max - z_min, 0.02)  # At least 2cm
             z_min = z_center - depth_extent / 2
             z_max = z_center + depth_extent / 2
 
+        # Ensure minimum depth size of 2cm (more realistic for real objects)
         min_depth_size = 0.02
         if (z_max - z_min) < min_depth_size:
+            # Expand around center
             half_min = min_depth_size / 2
             z_min = z_center - half_min
             z_max = z_center + half_min
 
         return float(z_center), float(z_min), float(z_max)
 
-    @staticmethod
-    def _compute_height_bounds(
-        valid_coords: np.ndarray,
-        valid_depths: np.ndarray,
-        spatial_weights: np.ndarray,
-        depth_info: CameraInfo,
-    ) -> Tuple[float, float, float]:
-        try:
-            valid_depths = np.asarray(valid_depths, dtype=np.float64)
-            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
-        except (ValueError, TypeError):
-            return 0.0, 0.0, 0.0
-
-        if len(valid_coords) == 0 or len(valid_depths) == 0:
-            return 0.0, 0.0, 0.0
-
-        k = depth_info.k
-        py, fy = k[5], k[4]
-
-        if fy == 0 or not np.all(np.isfinite(valid_depths)):
-            return 0.0, 0.0, 0.0
-
-        y_coords_pixel = valid_coords[:, 1]
-        y_3d = valid_depths * (y_coords_pixel - py) / fy
-
-        if not np.any(np.isfinite(y_3d)):
-            return 0.0, 0.0, 0.0
-
-        if len(valid_coords) < 4:
-            return float(np.median(y_3d)), float(np.min(y_3d)), float(np.max(y_3d))
-
-        sorted_idx = np.argsort(y_3d)
-        sorted_y = y_3d[sorted_idx]
-        sorted_weights = spatial_weights[sorted_idx]
-        cumsum_weights = np.cumsum(sorted_weights)
-        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
-        median_idx = np.searchsorted(cumsum_weights, 0.5)
-        y_median = sorted_y[median_idx]
-
-        deviations = np.abs(y_3d - y_median)
-        mad = np.median(deviations)
-
-        threshold = np.clip(4.5 * mad, 0.06, 0.50)
-        valid_mask = deviations <= threshold
-        filtered_y = y_3d[valid_mask]
-        filtered_weights = spatial_weights[valid_mask]
-
-        if len(filtered_y) < max(4, len(y_3d) * 0.12):
-            filtered_y = y_3d
-            filtered_weights = spatial_weights
-
-        sorted_idx = np.argsort(filtered_y)
-        sorted_y = filtered_y[sorted_idx]
-        sorted_weights = filtered_weights[sorted_idx]
-        cumsum_weights = np.cumsum(sorted_weights)
-        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
-
-        trim_low_idx = np.searchsorted(cumsum_weights, 0.05)
-        trim_high_idx = np.searchsorted(cumsum_weights, 0.95)
-
-        if trim_high_idx > trim_low_idx:
-            trimmed_y = sorted_y[trim_low_idx:trim_high_idx]
-            trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
-            if np.sum(trimmed_weights) > 0:
-                y_center = np.average(trimmed_y, weights=trimmed_weights)
-            else:
-                y_center = np.median(filtered_y)
-        else:
-            y_center = np.median(filtered_y)
-
-        p3_idx = np.searchsorted(cumsum_weights, 0.03)
-        p97_idx = np.searchsorted(cumsum_weights, 0.97)
-
-        y_min = sorted_y[p3_idx]
-        y_max = sorted_y[p97_idx]
-
-        min_height = 0.02
-        if (y_max - y_min) < min_height:
-            half_min = min_height / 2
-            y_min = y_center - half_min
-            y_max = y_center + half_min
-
-        return float(y_center), float(y_min), float(y_max)
-
-    @staticmethod
-    def _compute_width_bounds(
-        valid_coords: np.ndarray,
-        valid_depths: np.ndarray,
-        spatial_weights: np.ndarray,
-        depth_info: CameraInfo,
-    ) -> Tuple[float, float, float]:
-        try:
-            valid_depths = np.asarray(valid_depths, dtype=np.float64)
-            spatial_weights = np.asarray(spatial_weights, dtype=np.float64)
-        except (ValueError, TypeError):
-            return 0.0, 0.0, 0.0
-
-        if len(valid_coords) == 0 or len(valid_depths) == 0:
-            return 0.0, 0.0, 0.0
-
-        k = depth_info.k
-        px, fx = k[2], k[0]
-
-        if fx == 0 or not np.all(np.isfinite(valid_depths)):
-            return 0.0, 0.0, 0.0
-
-        x_coords_pixel = valid_coords[:, 0]
-        x_3d = valid_depths * (x_coords_pixel - px) / fx
-
-        if not np.any(np.isfinite(x_3d)):
-            return 0.0, 0.0, 0.0
-
-        if len(valid_coords) < 4:
-            return float(np.median(x_3d)), float(np.min(x_3d)), float(np.max(x_3d))
-
-        sorted_idx = np.argsort(x_3d)
-        sorted_x = x_3d[sorted_idx]
-        sorted_weights = spatial_weights[sorted_idx]
-        cumsum_weights = np.cumsum(sorted_weights)
-        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
-        median_idx = np.searchsorted(cumsum_weights, 0.5)
-        x_median = sorted_x[median_idx]
-
-        deviations = np.abs(x_3d - x_median)
-        mad = np.median(deviations)
-
-        depth_std = np.std(valid_depths)
-        if depth_std > 0.15:
-            threshold = np.clip(4.0 * mad, 0.06, 0.40)
-        else:
-            threshold = np.clip(4.5 * mad, 0.08, 0.50)
-
-        valid_mask = deviations <= threshold
-        filtered_x = x_3d[valid_mask]
-        filtered_weights = spatial_weights[valid_mask]
-
-        if len(filtered_x) < max(4, len(x_3d) * 0.12):
-            filtered_x = x_3d
-            filtered_weights = spatial_weights
-
-        sorted_idx = np.argsort(filtered_x)
-        sorted_x = filtered_x[sorted_idx]
-        sorted_weights = filtered_weights[sorted_idx]
-        cumsum_weights = np.cumsum(sorted_weights)
-        cumsum_weights /= cumsum_weights[-1] if cumsum_weights[-1] > 0 else 1.0
-
-        trim_low_idx = np.searchsorted(cumsum_weights, 0.05)
-        trim_high_idx = np.searchsorted(cumsum_weights, 0.95)
-
-        if trim_high_idx > trim_low_idx:
-            trimmed_x = sorted_x[trim_low_idx:trim_high_idx]
-            trimmed_weights = sorted_weights[trim_low_idx:trim_high_idx]
-            if np.sum(trimmed_weights) > 0:
-                x_center = np.average(trimmed_x, weights=trimmed_weights)
-            else:
-                x_center = np.median(filtered_x)
-        else:
-            x_center = np.median(filtered_x)
-
-        p3_idx = np.searchsorted(cumsum_weights, 0.03)
-        p97_idx = np.searchsorted(cumsum_weights, 0.97)
-
-        x_min = sorted_x[p3_idx]
-        x_max = sorted_x[p97_idx]
-
-        min_width = 0.02
-        if (x_max - x_min) < min_width:
-            half_min = min_width / 2
-            x_min = x_center - half_min
-            x_max = x_center + half_min
-
-        return float(x_center), float(x_min), float(x_max)
 
 
 def main(args=None):

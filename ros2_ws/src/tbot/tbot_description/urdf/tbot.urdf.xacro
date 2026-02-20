@@ -169,29 +169,12 @@
   <link name="camera_depth_rgb_link">
   </link>
 
-  <!-- <joint name="camera_pole_joint" type="fixed">
-    <parent link="base_link"/>
-    <child link="camera_pole_link"/>
-    <origin xyz="-0.17 0 0.15" rpy="0 0 0"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_depth_rgb_link"/>
+    <child link="camera_depth_optical_link"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
   </joint>
 
-  <link name="camera_pole_link">
-    <visual>
-      <origin xyz="0.02 0 -0.05" rpy="0 0 0"/>
-      <geometry>
-        <cylinder radius="0.008" length="0.1"/>
-      </geometry>
-      <material name="black"/>
-    </visual>
-    <collision>
-      <origin xyz="0.02 0 -0.05" rpy="0 0 0"/>
-      <geometry>
-        <cylinder radius="0.008" length="0.1"/>
-      </geometry>
-    </collision>
-    <xacro:inertial_cylinder mass="0.1" length="0.1" radius="0.008">
-      <origin xyz="0.02 0 -0.05" rpy="0 0 0"/>
-    </xacro:inertial_cylinder>
-  </link> -->
+  <link name="camera_depth_optical_link"/>
 
 </robot>
