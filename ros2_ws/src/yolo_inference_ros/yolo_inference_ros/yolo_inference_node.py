@@ -48,7 +48,7 @@ class YoloInferenceNode(Node):
         self.declare_parameter("device", "cuda:0")
         self.declare_parameter("fuse_model", False)
         self.declare_parameter("yolo_encoding", "bgr8")
-        self.declare_parameter("tracker", "")
+        self.declare_parameter("tracker", "") # path to the tracker config file
 
         self.declare_parameter("threshold", 0.5)
         self.declare_parameter("iou", 0.5)
