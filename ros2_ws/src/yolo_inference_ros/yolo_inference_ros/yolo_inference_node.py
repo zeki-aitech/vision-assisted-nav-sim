@@ -1,5 +1,5 @@
 import math
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Set
 
 import rclpy
 from rclpy.node import Node
@@ -15,6 +15,9 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from sensor_msgs.msg import Image, CameraInfo
+from geometry_msgs.msg import PoseStamped
+import tf2_geometry_msgs
+
 from vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
@@ -45,9 +48,18 @@ class YoloInferenceNode(Node):
         self.declare_parameter("enable_3d", False)
         self.declare_parameter("enable_debug", False)
         
+        # TF Frame Parameters
+        self.declare_parameter("target_frame", "base_link")
+        
         # Tracker Parameters
         self.declare_parameter("enable_tracker", False) 
         self.declare_parameter("tracker_cfg", "bytetrack.yaml")
+        
+        # Temporal Filter Parameters (Sliding Window + Hysteresis)
+        self.declare_parameter("enable_temporal_filter", False)
+        self.declare_parameter("temp_window_size", 5)
+        self.declare_parameter("temp_enter_thresh", 0.8)
+        self.declare_parameter("temp_exit_thresh", 0.3)
         
         self.declare_parameter("model", "yolov8m.pt")
         self.declare_parameter("task", "detect")
@@ -71,8 +83,15 @@ class YoloInferenceNode(Node):
         self.enable_3d = self.get_parameter("enable_3d").get_parameter_value().bool_value
         self.enable_debug = self.get_parameter("enable_debug").get_parameter_value().bool_value
         
+        self.target_frame = self.get_parameter("target_frame").get_parameter_value().string_value
+        
         self.enable_tracker = self.get_parameter("enable_tracker").get_parameter_value().bool_value
         self.tracker_cfg = self.get_parameter("tracker_cfg").get_parameter_value().string_value
+        
+        self.enable_temporal_filter = self.get_parameter("enable_temporal_filter").get_parameter_value().bool_value
+        self.temp_window_size = self.get_parameter("temp_window_size").get_parameter_value().integer_value
+        self.temp_enter_thresh = self.get_parameter("temp_enter_thresh").get_parameter_value().double_value
+        self.temp_exit_thresh = self.get_parameter("temp_exit_thresh").get_parameter_value().double_value
         
         self.model = self.get_parameter("model").get_parameter_value().string_value
         self.task = self.get_parameter("task").get_parameter_value().string_value
@@ -100,6 +119,14 @@ class YoloInferenceNode(Node):
         )
 
         self.cv_bridge = CvBridge()
+        
+        # --- Internal States for Temporal Filtering ---
+        self.track_history: Dict[int, List[float]] = {}
+        self.active_tracks: Set[int] = set()
+
+        if self.enable_temporal_filter and not self.enable_tracker:
+            self.get_logger().warn("Temporal Filter requires Tracker! Forcing enable_temporal_filter to False.")
+            self.enable_temporal_filter = False
 
         # --- Publishers ---
         self.pub_2d = self.create_publisher(Detection2DArray, 'detections_2d', 10)
@@ -119,7 +146,7 @@ class YoloInferenceNode(Node):
 
         # --- Subscribers & 3D Setup ---
         if self.enable_3d:
-            self.get_logger().info("Mode: 3D (RGB + Depth + Info)")
+            self.get_logger().info(f"Mode: 3D (RGB + Depth + Info) -> Target Frame: {self.target_frame}")
             self.init_3d()
             self.tf_buffer = Buffer()
             self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -153,7 +180,10 @@ class YoloInferenceNode(Node):
         
         self.get_logger().info('YoloInferenceNode initialized')
         if self.enable_tracker:
-            self.get_logger().info(f"YOLO Tracker Enabled with config: {self.tracker_cfg}")
+            self.get_logger().info(f"YOLO Tracker Enabled: {self.tracker_cfg}")
+        if self.enable_temporal_filter:
+            self.get_logger().info(f"Temporal Filter Enabled (Window: {self.temp_window_size}, "
+                                   f"Enter: {self.temp_enter_thresh}, Exit: {self.temp_exit_thresh})")
         
     def init_yolo_model(self):
         self.get_logger().info(f"Loading YOLO model: {self.model} ...")
@@ -219,10 +249,6 @@ class YoloInferenceNode(Node):
         )
 
     def publish_label_info(self):
-        """
-        Publish the dictionary mapping of class IDs to Class names.
-        Published once using Transient Local QoS.
-        """
         msg = LabelInfo()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "yolo_model" 
@@ -236,6 +262,61 @@ class YoloInferenceNode(Node):
         msg.threshold = float(self.threshold)
         self.pub_label_info.publish(msg)
         self.get_logger().info(f"Published LabelInfo mapping for {len(self.yolo_model.names)} classes to /labels")
+
+    def _apply_temporal_filter(self, results: Results) -> List[int]:
+        if not results.boxes or results.boxes.id is None:
+            self._decay_lost_tracks(set())
+            return []
+
+        valid_indices = []
+        current_frame_tids = set()
+        
+        track_ids = results.boxes.id.int().tolist()
+        confs = results.boxes.conf.float().tolist()
+
+        for i, (tid, conf) in enumerate(zip(track_ids, confs)):
+            current_frame_tids.add(tid)
+
+            # 1. Sliding Window Logic
+            if tid not in self.track_history:
+                self.track_history[tid] = []
+            self.track_history[tid].append(conf)
+            
+            if len(self.track_history[tid]) > self.temp_window_size:
+                self.track_history[tid].pop(0)
+
+            history = self.track_history[tid]
+            max_conf = max(history)
+            mean_conf = sum(history) / len(history)
+
+            # 2. Hysteresis Logic
+            if tid not in self.active_tracks:
+                min_hits = min(3, self.temp_window_size)
+                if max_conf >= self.temp_enter_thresh and len(history) >= min_hits:
+                    self.active_tracks.add(tid)
+                    valid_indices.append(i)
+            else:
+                if mean_conf <= self.temp_exit_thresh:
+                    self.active_tracks.remove(tid)
+                else:
+                    valid_indices.append(i)
+
+        self._decay_lost_tracks(current_frame_tids)
+        return valid_indices
+
+    def _decay_lost_tracks(self, current_frame_tids: Set[int]):
+        lost_tids = set(self.track_history.keys()) - current_frame_tids
+        
+        for tid in list(lost_tids):
+            self.track_history[tid].append(0.0)
+            
+            if len(self.track_history[tid]) > self.temp_window_size:
+                self.track_history[tid].pop(0)
+
+            if sum(self.track_history[tid]) / len(self.track_history[tid]) <= self.temp_exit_thresh:
+                if tid in self.active_tracks:
+                    self.active_tracks.remove(tid)
+                del self.track_history[tid]
         
     def callback_2d(self, image_msg: Image):
         self._process_data(image_msg)
@@ -257,6 +338,21 @@ class YoloInferenceNode(Node):
             self.get_logger().error(f"CV Bridge conversion failed: {e}")
             return
         
+        # --- TF Lookup for 3D Projection ---
+        target_transform = None
+        if self.enable_3d:
+            try:
+                # Use Time() (zero time) to fetch the latest transform, avoiding Extrapolation errors
+                target_transform = self.tf_buffer.lookup_transform(
+                    self.target_frame,
+                    image_msg.header.frame_id,
+                    rclpy.time.Time()
+                )
+            except Exception as ex:
+                self.get_logger().warn(f"TF Lookup failed from {image_msg.header.frame_id} to {self.target_frame}: {ex}", throttle_duration_sec=2.0)
+                # If TF fails, skip 3D processing to avoid bad data
+                pass
+
         # --- Inference / Tracking Execution ---
         if self.enable_tracker:
             inference_results = self.yolo_model.track(
@@ -265,11 +361,11 @@ class YoloInferenceNode(Node):
                 persist=True,
                 verbose=False,
                 stream=False,
-                conf=self.threshold,
+                conf=0.1 if self.enable_temporal_filter else self.threshold, 
                 iou=self.iou,
                 imgsz=(self.imgsz_height, self.imgsz_width),
                 half=self.half,
-                device=self.device
+                device=self.device,
             )
         else:
             inference_results = self.yolo_model.predict(
@@ -289,24 +385,30 @@ class YoloInferenceNode(Node):
         
         results: Results = inference_results[0].cpu()
 
+        # --- Filter Execution ---
+        if self.enable_temporal_filter and self.enable_tracker:
+            valid_indices = self._apply_temporal_filter(results)
+        else:
+            valid_indices = list(range(len(results.boxes))) if results.boxes else []
+
         detections_2d_msg = Detection2DArray()
-        detections_2d_msg.header = image_msg.header
+        detections_2d_msg.header = image_msg.header # 2D pixel coordinates stay in camera frame
         
         if self.enable_3d:
             detections_3d_msg = Detection3DArray()
-            detections_3d_msg.header = image_msg.header
+            detections_3d_msg.header.stamp = image_msg.header.stamp
+            detections_3d_msg.header.frame_id = self.target_frame # 3D coordinates are published in the target frame
 
         if results.boxes:
             hypothesis_list = self.parse_hypothesis(results)
             boxes_2d_list = self.parse_boxes(results) 
 
-            for i in range(len(results.boxes)):
+            for i in valid_indices:
                 # --- 2D Detection Processing ---
                 det_2d = Detection2D()
                 det_2d.header = image_msg.header
                 det_2d.bbox = boxes_2d_list[i]
                 
-                # Assign track ID to the standard ROS 2 id field
                 det_2d.id = hypothesis_list[i]["track_id"]
                 
                 obj_hyp = ObjectHypothesisWithPose()
@@ -317,7 +419,7 @@ class YoloInferenceNode(Node):
                 detections_2d_msg.detections.append(det_2d)
 
                 # --- 3D Detection Processing ---
-                if self.enable_3d and depth_msg is not None and depth_info_msg is not None:
+                if self.enable_3d and depth_msg is not None and depth_info_msg is not None and target_transform is not None:
                     try:
                         depth_image = self.cv_bridge.imgmsg_to_cv2(
                             depth_msg, desired_encoding="passthrough")
@@ -335,17 +437,31 @@ class YoloInferenceNode(Node):
                     )
                     
                     if box_3d_data is not None:
+                        # 1. Package as PoseStamped in the Camera Frame
+                        pose_cam = PoseStamped()
+                        pose_cam.header = image_msg.header
+                        pose_cam.pose.position.x = box_3d_data.x
+                        pose_cam.pose.position.y = box_3d_data.y
+                        pose_cam.pose.position.z = box_3d_data.z
+                        pose_cam.pose.orientation.w = 1.0 # Default unrotated camera optical frame
+
+                        # 2. Apply TF2 Transform to Target Frame (e.g., base_link)
+                        try:
+                            pose_target = tf2_geometry_msgs.do_transform_pose(pose_cam.pose, target_transform)
+                        except Exception as e:
+                            self.get_logger().warn(f"Failed to apply TF transform: {e}")
+                            continue
+
+                        # 3. Build the Detection3D Message
                         det_3d_msg = Detection3D()
-                        det_3d_msg.header = image_msg.header
-                        
-                        # Assign track ID to the standard ROS 2 id field
+                        det_3d_msg.header.stamp = image_msg.header.stamp
+                        det_3d_msg.header.frame_id = self.target_frame
                         det_3d_msg.id = hypothesis_list[i]["track_id"]
                         
-                        det_3d_msg.bbox.center.position.x = box_3d_data.x
-                        det_3d_msg.bbox.center.position.y = box_3d_data.y
-                        det_3d_msg.bbox.center.position.z = box_3d_data.z
-                        det_3d_msg.bbox.center.orientation.w = 1.0
+                        det_3d_msg.bbox.center = pose_target
                         
+                        # Sizes remain identical. The orientation quaternion from do_transform_pose 
+                        # automatically rotates the local axes of this bounding box to match the target frame!
                         det_3d_msg.bbox.size.x = box_3d_data.w
                         det_3d_msg.bbox.size.y = box_3d_data.h
                         det_3d_msg.bbox.size.z = box_3d_data.d
@@ -370,9 +486,15 @@ class YoloInferenceNode(Node):
                 # 2. Publish 3D Markers to RViz2
                 if self.enable_3d and detections_3d_msg is not None:
                     marker_array = MarkerArray()
+                    
+                    delete_marker = Marker()
+                    delete_marker.action = Marker.DELETEALL
+                    marker_array.markers.append(delete_marker)
+
                     for i, det_3d in enumerate(detections_3d_msg.detections):
                         new_markers = self.create_bb_markers(det_3d, color=(0, 255, 0), base_id=i)
                         marker_array.markers.extend(new_markers)
+                        
                     self.pub_markers.publish(marker_array)
                     
             except Exception as e:
@@ -432,18 +554,13 @@ class YoloInferenceNode(Node):
             text_marker.color.b = 1.0
             text_marker.color.a = 1.0
             
-            # 1. Extract Class Name
             class_id_str = detection.results[0].hypothesis.class_id
             raw_cls_id = int(class_id_str)
             class_name = self.yolo_model.names[raw_cls_id]
             
-            # 2. Extract Score
             score = detection.results[0].hypothesis.score
-            
-            # 3. Extract Track ID from the standard id field
             track_id_str = detection.id
             
-            # Format text in RViz
             if track_id_str != "-1":
                 text_marker.text = f"{class_name}-[ID:{track_id_str}]-({score:.2f})"
             else:
@@ -459,8 +576,6 @@ class YoloInferenceNode(Node):
         if results.boxes:
             for box_data in results.boxes:
                 cls_id = int(box_data.cls)
-                
-                # Extract Track ID if tracker is enabled and assigned an ID
                 track_id = int(box_data.id) if box_data.id is not None else -1
 
                 hypothesis = {
