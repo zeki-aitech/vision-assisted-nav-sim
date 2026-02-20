@@ -45,12 +45,15 @@ class YoloInferenceNode(Node):
         self.declare_parameter("enable_3d", False)
         self.declare_parameter("enable_debug", False)
         
+        # Tracker Parameters
+        self.declare_parameter("enable_tracker", False) 
+        self.declare_parameter("tracker_cfg", "bytetrack.yaml")
+        
         self.declare_parameter("model", "yolov8m.pt")
         self.declare_parameter("task", "detect")
         self.declare_parameter("device", "cuda:0")
         self.declare_parameter("fuse_model", False)
         self.declare_parameter("yolo_encoding", "bgr8")
-        self.declare_parameter("tracker", "") # path to the tracker config file
 
         self.declare_parameter("threshold", 0.5)
         self.declare_parameter("iou", 0.5)
@@ -68,12 +71,14 @@ class YoloInferenceNode(Node):
         self.enable_3d = self.get_parameter("enable_3d").get_parameter_value().bool_value
         self.enable_debug = self.get_parameter("enable_debug").get_parameter_value().bool_value
         
+        self.enable_tracker = self.get_parameter("enable_tracker").get_parameter_value().bool_value
+        self.tracker_cfg = self.get_parameter("tracker_cfg").get_parameter_value().string_value
+        
         self.model = self.get_parameter("model").get_parameter_value().string_value
         self.task = self.get_parameter("task").get_parameter_value().string_value
         self.device = self.get_parameter("device").get_parameter_value().string_value
         self.fuse_model = self.get_parameter("fuse_model").get_parameter_value().bool_value
         self.yolo_encoding = self.get_parameter("yolo_encoding").get_parameter_value().string_value
-        self.tracker = self.get_parameter("tracker").get_parameter_value().string_value
 
         self.threshold = self.get_parameter("threshold").get_parameter_value().double_value
         self.iou = self.get_parameter("iou").get_parameter_value().double_value
@@ -147,6 +152,8 @@ class YoloInferenceNode(Node):
         self.publish_label_info()
         
         self.get_logger().info('YoloInferenceNode initialized')
+        if self.enable_tracker:
+            self.get_logger().info(f"YOLO Tracker Enabled with config: {self.tracker_cfg}")
         
     def init_yolo_model(self):
         self.get_logger().info(f"Loading YOLO model: {self.model} ...")
@@ -217,11 +224,9 @@ class YoloInferenceNode(Node):
         Published once using Transient Local QoS.
         """
         msg = LabelInfo()
-        # Note: If no image has arrived yet, clock will be current time
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "yolo_model" # Generic frame for info
+        msg.header.frame_id = "yolo_model" 
         
-        # Populate the class mapping from the loaded YOLO model
         for cls_id, cls_name in self.yolo_model.names.items():
             vc = VisionClass()
             vc.class_id = int(cls_id)
@@ -229,7 +234,6 @@ class YoloInferenceNode(Node):
             msg.class_map.append(vc)
             
         msg.threshold = float(self.threshold)
-        
         self.pub_label_info.publish(msg)
         self.get_logger().info(f"Published LabelInfo mapping for {len(self.yolo_model.names)} classes to /labels")
         
@@ -245,7 +249,6 @@ class YoloInferenceNode(Node):
         depth_msg: Optional[Image] = None, 
         depth_info_msg: Optional[CameraInfo] = None
     ):
-
         try:
             cv_image = self.cv_bridge.imgmsg_to_cv2(
                 image_msg, desired_encoding=self.yolo_encoding
@@ -254,20 +257,35 @@ class YoloInferenceNode(Node):
             self.get_logger().error(f"CV Bridge conversion failed: {e}")
             return
         
-        inference_results = self.yolo_model.predict(
-            source=cv_image,
-            verbose=False,
-            stream=False,
-            conf=self.threshold,
-            iou=self.iou,
-            imgsz=(self.imgsz_height, self.imgsz_width),
-            half=self.half,
-            max_det=self.max_det,
-            augment=self.augment,
-            agnostic_nms=self.agnostic_nms,
-            retina_masks=self.retina_masks,
-            device=self.device,
-        )
+        # --- Inference / Tracking Execution ---
+        if self.enable_tracker:
+            inference_results = self.yolo_model.track(
+                source=cv_image,
+                tracker=self.tracker_cfg,
+                persist=True,
+                verbose=False,
+                stream=False,
+                conf=self.threshold,
+                iou=self.iou,
+                imgsz=(self.imgsz_height, self.imgsz_width),
+                half=self.half,
+                device=self.device
+            )
+        else:
+            inference_results = self.yolo_model.predict(
+                source=cv_image,
+                verbose=False,
+                stream=False,
+                conf=self.threshold,
+                iou=self.iou,
+                imgsz=(self.imgsz_height, self.imgsz_width),
+                half=self.half,
+                max_det=self.max_det,
+                augment=self.augment,
+                agnostic_nms=self.agnostic_nms,
+                retina_masks=self.retina_masks,
+                device=self.device,
+            )
         
         results: Results = inference_results[0].cpu()
 
@@ -288,6 +306,9 @@ class YoloInferenceNode(Node):
                 det_2d.header = image_msg.header
                 det_2d.bbox = boxes_2d_list[i]
                 
+                # Assign track ID to the standard ROS 2 id field
+                det_2d.id = hypothesis_list[i]["track_id"]
+                
                 obj_hyp = ObjectHypothesisWithPose()
                 obj_hyp.hypothesis.class_id = hypothesis_list[i]["class_id"]
                 obj_hyp.hypothesis.score = hypothesis_list[i]["score"]
@@ -302,7 +323,7 @@ class YoloInferenceNode(Node):
                             depth_msg, desired_encoding="passthrough")
                     except Exception as e:
                         self.get_logger().error(f"Depth processing failed: {e}")
-                        return None
+                        continue
                     
                     box_3d_data = self.depth_processor.convert_to_3d_bbox(
                         depth_image=depth_image,
@@ -316,6 +337,9 @@ class YoloInferenceNode(Node):
                     if box_3d_data is not None:
                         det_3d_msg = Detection3D()
                         det_3d_msg.header = image_msg.header
+                        
+                        # Assign track ID to the standard ROS 2 id field
+                        det_3d_msg.id = hypothesis_list[i]["track_id"]
                         
                         det_3d_msg.bbox.center.position.x = box_3d_data.x
                         det_3d_msg.bbox.center.position.y = box_3d_data.y
@@ -334,7 +358,7 @@ class YoloInferenceNode(Node):
         if self.enable_3d and detections_3d_msg is not None:
             self.pub_3d.publish(detections_3d_msg)
             
-        # Publish Debug Image & Markers (If Enabled)
+        # Publish Debug Image & Markers
         if self.enable_debug:
             try:
                 # 1. Publish Annotated 2D Image
@@ -347,7 +371,6 @@ class YoloInferenceNode(Node):
                 if self.enable_3d and detections_3d_msg is not None:
                     marker_array = MarkerArray()
                     for i, det_3d in enumerate(detections_3d_msg.detections):
-                        # Create box and text markers, extend the array
                         new_markers = self.create_bb_markers(det_3d, color=(0, 255, 0), base_id=i)
                         marker_array.markers.extend(new_markers)
                     self.pub_markers.publish(marker_array)
@@ -356,20 +379,14 @@ class YoloInferenceNode(Node):
                 self.get_logger().error(f"Failed to publish debug visualizations: {e}")
 
     def create_bb_markers(self, detection: Detection3D, color: Tuple[int, int, int], base_id: int) -> List[Marker]:
-        """
-        Create a 3D bounding box AND a text label for RViz visualization.
-        """
         markers = []
         bbox = detection.bbox
         lifetime = Duration(seconds=0.5).to_msg()
 
-        # ---------------------------
-        # 1. Box Marker (CUBE)
-        # ---------------------------
         box_marker = Marker()
         box_marker.header = detection.header
         box_marker.ns = "yolo_3d_boxes"
-        box_marker.id = base_id * 2  # Evens for boxes
+        box_marker.id = base_id * 2  
         box_marker.type = Marker.CUBE
         box_marker.action = Marker.ADD
         box_marker.frame_locked = False
@@ -395,14 +412,11 @@ class YoloInferenceNode(Node):
 
         markers.append(box_marker)
 
-        # ---------------------------
-        # 2. Text Marker (TEXT_VIEW_FACING)
-        # ---------------------------
         if detection.results:
             text_marker = Marker()
             text_marker.header = detection.header
             text_marker.ns = "yolo_3d_labels"
-            text_marker.id = (base_id * 2) + 1  # Odds for text
+            text_marker.id = (base_id * 2) + 1  
             text_marker.type = Marker.TEXT_VIEW_FACING
             text_marker.action = Marker.ADD
             text_marker.frame_locked = False
@@ -418,10 +432,22 @@ class YoloInferenceNode(Node):
             text_marker.color.b = 1.0
             text_marker.color.a = 1.0
             
-            class_id = detection.results[0].hypothesis.class_id
-            class_name = self.yolo_model.names[int(class_id)]
+            # 1. Extract Class Name
+            class_id_str = detection.results[0].hypothesis.class_id
+            raw_cls_id = int(class_id_str)
+            class_name = self.yolo_model.names[raw_cls_id]
+            
+            # 2. Extract Score
             score = detection.results[0].hypothesis.score
-            text_marker.text = f"{class_name}-{class_id}-({score:.2f})"
+            
+            # 3. Extract Track ID from the standard id field
+            track_id_str = detection.id
+            
+            # Format text in RViz
+            if track_id_str != "-1":
+                text_marker.text = f"{class_name}-[ID:{track_id_str}]-({score:.2f})"
+            else:
+                text_marker.text = f"{class_name}-({score:.2f})"
             
             text_marker.lifetime = lifetime
             markers.append(text_marker)
@@ -433,8 +459,13 @@ class YoloInferenceNode(Node):
         if results.boxes:
             for box_data in results.boxes:
                 cls_id = int(box_data.cls)
+                
+                # Extract Track ID if tracker is enabled and assigned an ID
+                track_id = int(box_data.id) if box_data.id is not None else -1
+
                 hypothesis = {
                     "class_id": str(cls_id), 
+                    "track_id": str(track_id),
                     "class_name": self.yolo_model.names[cls_id],
                     "score": float(box_data.conf),
                 }
