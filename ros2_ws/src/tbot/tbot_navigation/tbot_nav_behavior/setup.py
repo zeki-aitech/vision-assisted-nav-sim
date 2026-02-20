@@ -24,7 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'perception_nav_node = tbot_nav_behavior.perception_nav_node:main',
+            # 'perception_nav_node = tbot_nav_behavior.perception_nav_node:main',
+            'vision_safety_clamp_node = tbot_nav_behavior.vision_safety_clamp_node:main',
         ],
     },
 )

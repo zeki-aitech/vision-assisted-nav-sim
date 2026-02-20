@@ -48,7 +48,7 @@ class YoloInferenceNode(Node):
         self.declare_parameter("device", "cuda:0")
         self.declare_parameter("fuse_model", False)
         self.declare_parameter("yolo_encoding", "bgr8")
-        self.declare_parameter("enable", True)
+        self.declare_parameter("tracker", "")
 
         self.declare_parameter("threshold", 0.5)
         self.declare_parameter("iou", 0.5)
@@ -71,6 +71,7 @@ class YoloInferenceNode(Node):
         self.device = self.get_parameter("device").get_parameter_value().string_value
         self.fuse_model = self.get_parameter("fuse_model").get_parameter_value().bool_value
         self.yolo_encoding = self.get_parameter("yolo_encoding").get_parameter_value().string_value
+        self.tracker = self.get_parameter("tracker").get_parameter_value().string_value
 
         self.threshold = self.get_parameter("threshold").get_parameter_value().double_value
         self.iou = self.get_parameter("iou").get_parameter_value().double_value
@@ -82,7 +83,6 @@ class YoloInferenceNode(Node):
         self.agnostic_nms = self.get_parameter("agnostic_nms").get_parameter_value().bool_value
         self.retina_masks = self.get_parameter("retina_masks").get_parameter_value().bool_value
     
-        self.enable = self.get_parameter("enable").get_parameter_value().bool_value
         image_reliability = self.get_parameter("image_reliability").get_parameter_value().integer_value
         
         self.image_qos_profile = QoSProfile(

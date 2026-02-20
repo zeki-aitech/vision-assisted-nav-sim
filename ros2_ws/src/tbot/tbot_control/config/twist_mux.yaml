@@ -6,6 +6,10 @@ twist_mux:
         topic   : joy_teleop/cmd_vel
         timeout : 0.5
         priority: 10
+      vision_safe:
+        topic   : cmd_vel_vision_safe
+        timeout : 0.5
+        priority: 5
       external:
         topic   : cmd_vel
         timeout : 0.5
