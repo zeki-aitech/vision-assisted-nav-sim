@@ -16,7 +16,7 @@ def generate_launch_description():
     map_dir = LaunchConfiguration(
         'map',
         default=os.path.join(
-            get_package_share_directory('tbot_nav2'),
+            get_package_share_directory('tbot_nav'),
             'map',
             'map.yaml'))
 
@@ -25,14 +25,14 @@ def generate_launch_description():
     param_dir = LaunchConfiguration(
         'params_file',
         default=os.path.join(
-            get_package_share_directory('tbot_nav2'),
+            get_package_share_directory('tbot_nav'),
             'param',
             param_file_name))
 
     nav2_launch_file_dir = os.path.join(get_package_share_directory('nav2_bringup'), 'launch')
 
     rviz_config_dir = os.path.join(
-        get_package_share_directory('tbot_nav2'),
+        get_package_share_directory('tbot_nav'),
         'rviz',
         'tbot_nav2.rviz')
 
