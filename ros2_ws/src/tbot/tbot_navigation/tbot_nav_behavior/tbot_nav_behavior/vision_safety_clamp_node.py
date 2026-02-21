@@ -29,7 +29,12 @@ class VisionSafetyClampNode(Node):
         self.declare_parameter('robot_corridor_width', 0.8)
         self.declare_parameter('enable_debug', True)
         self.declare_parameter('timeout_sec', 0.5)
-        self.declare_parameter('target_frame', 'base_footprint') # The ground-truth frame for the robot
+        self.declare_parameter('target_frame', 'base_footprint') 
+        
+        # List of class IDs (as strings) that should trigger the safety clamp.
+        # e.g., ['0'] for person only, ['0', '2'] for person and car. 
+        # An empty list [] means ALL detected classes will trigger it.
+        self.declare_parameter('target_classes', ['0'])
         
         self.warn_dist = self.get_parameter('warning_distance').value
         self.stop_dist = self.get_parameter('stop_distance').value
@@ -37,9 +42,10 @@ class VisionSafetyClampNode(Node):
         self.enable_debug = self.get_parameter('enable_debug').value
         self.timeout_sec = self.get_parameter('timeout_sec').value
         self.target_frame = self.get_parameter('target_frame').value
+        self.target_classes = self.get_parameter('target_classes').value
 
         # --- State Variables ---
-        self.current_min_x = float('inf') # We use X now because base_footprint X is forward
+        self.current_min_x = float('inf') # Because base_footprint X is forward
         self.last_det_time = self.get_clock().now()
         
         self.current_scale_factor = 1.0
@@ -80,9 +86,8 @@ class VisionSafetyClampNode(Node):
 
         camera_frame_id = msg.header.frame_id
 
-        # 1. Look up the transform from the Camera to the Base Footprint
         try:
-            # We use rclpy.time.Time() to get the latest available transform
+            # Use rclpy.time.Time() to get the latest available transform
             transform = self.tf_buffer.lookup_transform(
                 self.target_frame, 
                 camera_frame_id, 
@@ -95,6 +100,12 @@ class VisionSafetyClampNode(Node):
         min_forward_dist = float('inf')
 
         for det in msg.detections:
+
+            # 1. Check if we have a filter active and if the detection has hypothesis data
+            if self.target_classes and len(det.results) > 0:
+                det_class_id = det.results[0].hypothesis.class_id
+                if det_class_id not in self.target_classes:
+                    continue 
             # 2. Package the raw optical point into a PointStamped
             p_cam = PointStamped()
             p_cam.header = msg.header
