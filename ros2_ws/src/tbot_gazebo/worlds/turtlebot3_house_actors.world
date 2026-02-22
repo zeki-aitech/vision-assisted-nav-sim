@@ -59,7 +59,7 @@
       </include>
     </model> -->
 
-    <model name="Cone_1">
+    <!-- <model name="Cone_1">
       <static>true</static>
       <pose>-3.0 4.0 0 0 0 0</pose>
       <link name="link">
@@ -80,9 +80,9 @@
           </geometry>
         </visual>
       </link>
-    </model>
+    </model> -->
 
-    <model name="Cone_2">
+    <model name="Cone_1">
       <static>true</static>
       <pose>-5.5 4.5 0 0 0 0</pose>
       <link name="link">
@@ -134,6 +134,40 @@
              <waypoint>
                 <time>3</time>
                 <pose>-6.3 4.2 0 0 0 -1.57</pose>
+             </waypoint>
+          </trajectory>
+       </script>
+    </actor>
+
+    <actor name="actor2">
+       <plugin name="actor_collisions_plugin" filename="libActorCollisionsPlugin.so"/>
+       <skin>
+          <filename>stand.dae</filename>
+          <!-- <scale>0.3</scale> -->
+          <scale>1</scale>
+       </skin>
+       <pose>-2 4 0 0 0 3.14</pose>
+       <animation name="standing">
+          <filename>stand.dae</filename>
+          <scale>1</scale>
+          <interpolate_x>false</interpolate_x>
+       </animation>
+       <script>
+          <loop>true</loop>
+          <delay_start>0</delay_start>
+          <auto_start>true</auto_start>
+          <trajectory id="0" type="standing">
+             <waypoint>
+                <time>0</time>
+                <pose>-2 4 0 0 0 3.14</pose>
+             </waypoint>
+             <waypoint>
+                <time>2</time>
+                <pose>-2 4 0 0 0 3.14</pose>
+             </waypoint>
+             <waypoint>
+                <time>3</time>
+                <pose>-2 4 0 0 0 3.14</pose>
              </waypoint>
           </trajectory>
        </script>

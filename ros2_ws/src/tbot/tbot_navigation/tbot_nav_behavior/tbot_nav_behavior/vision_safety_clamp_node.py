@@ -25,7 +25,7 @@ class VisionSafetyClampNode(Node):
 
         # --- Parameters ---
         self.declare_parameter('warning_distance', 2.5)
-        self.declare_parameter('stop_distance', 1.0)
+        self.declare_parameter('stop_distance', 1.5)
         self.declare_parameter('robot_corridor_width', 0.8)
         self.declare_parameter('enable_debug', True)
         self.declare_parameter('timeout_sec', 0.5)
