@@ -105,6 +105,29 @@
       </link>
     </model>
 
+    <model name="Cone_2">
+      <static>true</static>
+      <pose>-2 1 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <scale>5 5 5</scale>
+              <uri>model://construction_cone/meshes/construction_cone.dae</uri>
+            </mesh>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <mesh>
+              <scale>5 5 5</scale>
+              <uri>model://construction_cone/meshes/construction_cone.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
     <actor name="actor1">
        <plugin name="actor_collisions_plugin" filename="libActorCollisionsPlugin.so"/>
        <skin>
