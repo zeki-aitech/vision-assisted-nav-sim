@@ -15,10 +15,13 @@ def generate_launch_description():
     x_pose = LaunchConfiguration('x_pose', default='-6.5')
     y_pose = LaunchConfiguration('y_pose', default='-2.5')
 
-    world = os.path.join(
-        get_package_share_directory('tbot_gazebo'),
-        'worlds',
-        'turtlebot3_house_actors.world'
+    world = LaunchConfiguration(
+        'world',
+        default=os.path.join(
+            get_package_share_directory('tbot_gazebo'),
+            'worlds',
+            'turtlebot3_house_actors.world'
+        )
     )
 
     gzserver_cmd = IncludeLaunchDescription(
