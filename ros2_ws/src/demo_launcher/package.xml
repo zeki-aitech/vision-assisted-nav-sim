@@ -8,6 +8,10 @@
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>tbot_nav</exec_depend>
+  <exec_depend>tbot_gazebo</exec_depend>
+  <exec_depend>tbot_nav_behavior</exec_depend>
+  <exec_depend>yolo_inference_ros</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
