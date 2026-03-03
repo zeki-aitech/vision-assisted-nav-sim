@@ -9,4 +9,4 @@ install
 *.pt
 *.pyc
 *.mcap
-/notebooks/data
+notebooks

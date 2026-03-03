@@ -1,5 +1,4 @@
 import math
-import time
 from typing import List, Dict, Optional, Tuple, Set
 
 import rclpy
@@ -124,14 +123,6 @@ class YoloInferenceNode(Node):
         # --- Internal States for Temporal Filtering ---
         self.track_history: Dict[int, List[float]] = {}
         self.active_tracks: Set[int] = set()
-
-        # Inference speed profiling: accumulate then log every 1s
-        self._speed_last_log_time = time.monotonic()
-        self._speed_preprocess_ms_list: List[float] = []
-        self._speed_inference_ms_list: List[float] = []
-        self._speed_postprocess_ms_list: List[float] = []
-        self._speed_3d_ms_list: List[float] = []
-        self._speed_callback_ms_list: List[float] = []
 
         if self.enable_temporal_filter and not self.enable_tracker:
             self.get_logger().warn("Temporal Filter requires Tracker! Forcing enable_temporal_filter to False.")
@@ -339,7 +330,6 @@ class YoloInferenceNode(Node):
         depth_msg: Optional[Image] = None, 
         depth_info_msg: Optional[CameraInfo] = None
     ):
-        t_callback_start = time.perf_counter()
         try:
             cv_image = self.cv_bridge.imgmsg_to_cv2(
                 image_msg, desired_encoding=self.yolo_encoding
@@ -392,22 +382,8 @@ class YoloInferenceNode(Node):
                 retina_masks=self.retina_masks,
                 device=self.device,
             )
+        
         results: Results = inference_results[0].cpu()
-
-        # --- Record model speed (preprocess | inference | postprocess) ---
-        r0 = inference_results[0]
-        pre_ms = inf_ms = post_ms = 0.0
-        if hasattr(r0, 'speed') and isinstance(getattr(r0, 'speed'), dict):
-            pre_ms = r0.speed.get('preprocess', 0.0)
-            inf_ms = r0.speed.get('inference', 0.0)
-            post_ms = r0.speed.get('postprocess', 0.0)
-        elif hasattr(r0, 'speed') and hasattr(r0.speed, 'get'):
-            pre_ms = r0.speed.get('preprocess', 0.0)
-            inf_ms = r0.speed.get('inference', 0.0)
-            post_ms = r0.speed.get('postprocess', 0.0)
-        self._speed_preprocess_ms_list.append(pre_ms)
-        self._speed_inference_ms_list.append(inf_ms)
-        self._speed_postprocess_ms_list.append(post_ms)
 
         # --- Filter Execution ---
         if self.enable_temporal_filter and self.enable_tracker:
@@ -423,7 +399,6 @@ class YoloInferenceNode(Node):
             detections_3d_msg.header.stamp = image_msg.header.stamp
             detections_3d_msg.header.frame_id = self.target_frame # 3D coordinates are published in the target frame
 
-        frame_3d_ms = 0.0
         if results.boxes:
             hypothesis_list = self.parse_hypothesis(results)
             boxes_2d_list = self.parse_boxes(results) 
@@ -445,13 +420,11 @@ class YoloInferenceNode(Node):
 
                 # --- 3D Detection Processing ---
                 if self.enable_3d and depth_msg is not None and depth_info_msg is not None and target_transform is not None:
-                    t_3d_start = time.perf_counter()
                     try:
                         depth_image = self.cv_bridge.imgmsg_to_cv2(
                             depth_msg, desired_encoding="passthrough")
                     except Exception as e:
                         self.get_logger().error(f"Depth processing failed: {e}")
-                        frame_3d_ms += (time.perf_counter() - t_3d_start) * 1000.0
                         continue
                     
                     box_3d_data = self.depth_processor.convert_to_3d_bbox(
@@ -477,7 +450,6 @@ class YoloInferenceNode(Node):
                             pose_target = tf2_geometry_msgs.do_transform_pose(pose_cam.pose, target_transform)
                         except Exception as e:
                             self.get_logger().warn(f"Failed to apply TF transform: {e}")
-                            frame_3d_ms += (time.perf_counter() - t_3d_start) * 1000.0
                             continue
 
                         # 3. Build the Detection3D Message
@@ -496,9 +468,6 @@ class YoloInferenceNode(Node):
                         
                         det_3d_msg.results.append(obj_hyp)
                         detections_3d_msg.detections.append(det_3d_msg)
-                    frame_3d_ms += (time.perf_counter() - t_3d_start) * 1000.0
-        if self.enable_3d:
-            self._speed_3d_ms_list.append(frame_3d_ms)
 
         # Publish Results
         self.pub_2d.publish(detections_2d_msg)
@@ -530,30 +499,6 @@ class YoloInferenceNode(Node):
                     
             except Exception as e:
                 self.get_logger().error(f"Failed to publish debug visualizations: {e}")
-
-        # --- Full callback latency + log every 1s ---
-        t_callback_end = time.perf_counter()
-        self._speed_callback_ms_list.append((t_callback_end - t_callback_start) * 1000.0)
-        now = time.monotonic()
-        if now - self._speed_last_log_time >= 1.0 and self._speed_callback_ms_list:
-            n = len(self._speed_callback_ms_list)
-            avg_pre = sum(self._speed_preprocess_ms_list) / n
-            avg_inf = sum(self._speed_inference_ms_list) / n
-            avg_post = sum(self._speed_postprocess_ms_list) / n
-            avg_cb = sum(self._speed_callback_ms_list) / n
-            fps_cb = 1000.0 / avg_cb if avg_cb > 0 else 0.0
-            msg = f"[Speed] frames={n} | model process: pre={avg_pre:.1f} inf={avg_inf:.1f} post={avg_post:.1f} ms"
-            if self.enable_3d and self._speed_3d_ms_list:
-                avg_3d = sum(self._speed_3d_ms_list) / len(self._speed_3d_ms_list)
-                msg += f" | 3d process: {avg_3d:.1f} ms"
-            msg += f" | full latency: {avg_cb:.1f} ms ({fps_cb:.1f} FPS)"
-            self.get_logger().info(msg)
-            self._speed_last_log_time = now
-            self._speed_preprocess_ms_list.clear()
-            self._speed_inference_ms_list.clear()
-            self._speed_postprocess_ms_list.clear()
-            self._speed_3d_ms_list.clear()
-            self._speed_callback_ms_list.clear()
 
     def create_bb_markers(self, detection: Detection3D, color: Tuple[int, int, int], base_id: int) -> List[Marker]:
         markers = []
