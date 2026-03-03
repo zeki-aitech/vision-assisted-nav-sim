@@ -136,7 +136,6 @@
        <plugin name="actor_collisions_plugin" filename="libActorCollisionsPlugin.so"/>
        <skin>
           <filename>stand.dae</filename>
-          <!-- <scale>0.3</scale> -->
           <scale>1</scale>
        </skin>
        <pose>-2 5.0 0 0 0 -1.57</pose>
@@ -154,8 +153,8 @@
           <loop>true</loop>
           <delay_start>0</delay_start>
           <auto_start>true</auto_start>
-          <!-- Stand at A for 10s -->
-          <trajectory id="0" type="standing" tension="1">
+          
+          <trajectory id="0" type="standing">
              <waypoint>
                 <time>0</time>
                 <pose>-2 5.0 0 0 0 -1.57</pose>
@@ -165,55 +164,69 @@
                 <pose>-2 5.0 0 0 0 -1.57</pose>
              </waypoint>
           </trajectory>
-          <!-- Walk A -> B (1s) -->
-          <trajectory id="1" type="walking" tension="1">
+
+          <trajectory id="1" type="walking">
              <waypoint>
                 <time>10</time>
                 <pose>-2 5.0 0 0 0 -1.57</pose>
              </waypoint>
              <waypoint>
-                <time>11</time>
+                <time>10.25</time>
                 <pose>-2 4.0 0 0 0 -1.57</pose>
              </waypoint>
           </trajectory>
-          <!-- Stand at B: turn then stay 10s then turn -->
-          <trajectory id="2" type="standing" tension="1">
+
+          <trajectory id="2" type="standing">
              <waypoint>
-                <time>11</time>
+                <time>10.25</time>
                 <pose>-2 4.0 0 0 0 -1.57</pose>
              </waypoint>
              <waypoint>
-                <time>12</time>
+                <time>10.5</time>
+                <pose>-2 4.0 0 0 0 3.14</pose>
+             </waypoint>
+          </trajectory>
+
+          <trajectory id="3" type="standing">
+             <waypoint>
+                <time>10.5</time>
                 <pose>-2 4.0 0 0 0 3.14</pose>
              </waypoint>
              <waypoint>
-                <time>22</time>
+                <time>20.5</time>
+                <pose>-2 4.0 0 0 0 3.14</pose>
+             </waypoint>
+          </trajectory>
+
+          <trajectory id="4" type="standing">
+             <waypoint>
+                <time>20.5</time>
                 <pose>-2 4.0 0 0 0 3.14</pose>
              </waypoint>
              <waypoint>
-                <time>23</time>
+                <time>20.75</time>
                 <pose>-2 4.0 0 0 0 1.57</pose>
              </waypoint>
           </trajectory>
-          <!-- Walk B -> A (1s) -->
-          <trajectory id="3" type="walking" tension="1">
+
+          <trajectory id="5" type="walking">
              <waypoint>
-                <time>23</time>
+                <time>20.75</time>
                 <pose>-2 4.0 0 0 0 1.57</pose>
              </waypoint>
              <waypoint>
-                <time>24</time>
+                <time>21</time>
                 <pose>-2 5.0 0 0 0 1.57</pose>
              </waypoint>
           </trajectory>
-          <!-- Stand at A: turn to match loop start -->
-          <trajectory id="4" type="standing" tension="1">
+
+          <trajectory id="6" type="standing">
              <waypoint>
-                <time>24</time>
+                <time>21</time>
                 <pose>-2 5.0 0 0 0 1.57</pose>
              </waypoint>
              <waypoint>
-                <time>25</time>
+                <time>21.25</time>
                 <pose>-2 5.0 0 0 0 -1.57</pose>
              </waypoint>
           </trajectory>
