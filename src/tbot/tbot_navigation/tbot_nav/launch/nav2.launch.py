@@ -16,7 +16,7 @@ def generate_launch_description():
             'map',
             'map.yaml'))
 
-    param_file_name = 'tbot' + '.yaml'
+    param_file_name = 'tbot_nav2.yaml'
 
     param_dir = LaunchConfiguration(
         'params_file',
