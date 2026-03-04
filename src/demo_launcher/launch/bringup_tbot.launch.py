@@ -10,31 +10,27 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     map_path = LaunchConfiguration(
         'map',
-        default='/workspaces/vision-assisted-nav-sim/map_assets/map_house.yaml'
+        default='/workspaces/vision-assisted-nav-sim/map_assets/map_house.yaml',
     )
-    default_world = PathJoinSubstitution([
-        FindPackageShare('tbot_gazebo'),
-        'worlds',
-        'turtlebot3_house_actors.world',
-    ])
-    world = LaunchConfiguration('world', default=default_world)
-    x_pose = LaunchConfiguration('x_pose', default='-6.5')
-    y_pose = LaunchConfiguration('y_pose', default='-2.5')
+    model_path = LaunchConfiguration(
+        'model',
+        default='/workspaces/vision-assisted-nav-sim/test_temp/yolov8n.engine',
+    )
+    tracker_cfg_path = LaunchConfiguration(
+        'tracker_cfg',
+        default='/workspaces/vision-assisted-nav-sim/src/yolo_inference_ros/config/bytetrack.yaml',
+    )
+    threshold = LaunchConfiguration('threshold', default='0.25')
 
-    sim_launch = IncludeLaunchDescription(
+    control_tbot_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
                 FindPackageShare('tbot_gazebo'),
                 'launch',
-                'sim.launch.py',
+                'control_tbot.launch.py',
             ])
         ]),
-        launch_arguments={
-            'use_sim_time': use_sim_time,
-            'world': world,
-            'x_pose': x_pose,
-            'y_pose': y_pose,
-        }.items(),
+        launch_arguments={'use_sim_time': use_sim_time}.items(),
     )
 
     nav2_launch = IncludeLaunchDescription(
@@ -51,15 +47,21 @@ def generate_launch_description():
         }.items(),
     )
 
-    control_tbot_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            PathJoinSubstitution([
-                FindPackageShare('tbot_gazebo'),
-                'launch',
-                'control_tbot.launch.py',
-            ])
-        ]),
-        launch_arguments={'use_sim_time': use_sim_time}.items(),
+    yolo_inference_node = Node(
+        package='yolo_inference_ros',
+        executable='yolo_inference_node',
+        name='yolo_inference_node',
+        parameters=[{
+            'enable_debug': True,
+            'model': model_path,
+            'fuse_model': True,
+            'enable_3d': True,
+            'enable_tracker': True,
+            'tracker_cfg': tracker_cfg_path,
+            'threshold': threshold,
+            'use_sim_time': use_sim_time,
+        }],
+        output='screen',
     )
 
     vision_safety_clamp_node = Node(
@@ -67,21 +69,6 @@ def generate_launch_description():
         executable='vision_safety_clamp_node',
         name='vision_safety_clamp_node',
         parameters=[{'enable_debug': True, 'use_sim_time': use_sim_time}],
-        output='screen',
-    )
-
-    yolo_inference_node = Node(
-        package='yolo_inference_ros',
-        executable='yolo_inference_node',
-        name='yolo_inference_node',
-        parameters=[{
-            'enable_debug': True,
-            'model': 'yolov8n.pt',
-            'fuse_model': True,
-            'enable_3d': True,
-            'enable_tracker': True,
-            'use_sim_time': use_sim_time,
-        }],
         output='screen',
     )
 
@@ -97,15 +84,22 @@ def generate_launch_description():
             description='Full path to map file to load',
         ),
         DeclareLaunchArgument(
-            'world',
-            default_value=default_world,
-            description='Full path to Gazebo world file to load',
+            'model',
+            default_value='/workspaces/vision-assisted-nav-sim/test_temp/yolov8n.engine',
+            description='Full path to YOLO model file (.pt or .engine)',
         ),
-        DeclareLaunchArgument('x_pose', default_value='-6.5', description='Spawn x position'),
-        DeclareLaunchArgument('y_pose', default_value='-2.5', description='Spawn y position'),
-        sim_launch,
-        nav2_launch,
+        DeclareLaunchArgument(
+            'tracker_cfg',
+            default_value='/workspaces/vision-assisted-nav-sim/src/yolo_inference_ros/config/bytetrack.yaml',
+            description='Full path to ByteTrack config YAML',
+        ),
+        DeclareLaunchArgument(
+            'threshold',
+            default_value='0.25',
+            description='YOLO detection confidence threshold',
+        ),
         control_tbot_launch,
+        nav2_launch,
         yolo_inference_node,
         vision_safety_clamp_node,
     ])
