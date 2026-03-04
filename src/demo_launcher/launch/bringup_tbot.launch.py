@@ -18,7 +18,11 @@ def generate_launch_description():
     )
     tracker_cfg_path = LaunchConfiguration(
         'tracker_cfg',
-        default='/workspaces/vision-assisted-nav-sim/src/yolo_inference_ros/config/bytetrack.yaml',
+        default=PathJoinSubstitution([
+            FindPackageShare('yolo_inference_ros'),
+            'config',
+            'bytetrack.yaml',
+        ]),
     )
     threshold = LaunchConfiguration('threshold', default='0.25')
 
@@ -80,17 +84,21 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'map',
-            default_value='/workspaces/vision-assisted-nav-sim/map_assets/map_house.yaml',
+            default_value='',
             description='Full path to map file to load',
         ),
         DeclareLaunchArgument(
             'model',
-            default_value='/workspaces/vision-assisted-nav-sim/test_temp/yolov8n.engine',
+            default_value='',
             description='Full path to YOLO model file (.pt or .engine)',
         ),
         DeclareLaunchArgument(
             'tracker_cfg',
-            default_value='/workspaces/vision-assisted-nav-sim/src/yolo_inference_ros/config/bytetrack.yaml',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('yolo_inference_ros'),
+                'config',
+                'bytetrack.yaml',
+            ]),
             description='Full path to ByteTrack config YAML',
         ),
         DeclareLaunchArgument(

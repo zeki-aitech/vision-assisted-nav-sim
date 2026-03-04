@@ -4,9 +4,9 @@ install
 
 /ref
 /test_temp
+temp
 
 
 *.pt
 *.pyc
 *.mcap
-notebooks

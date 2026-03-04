@@ -32,8 +32,21 @@ If you prefer to build the image yourself: from the repo root,
 
 ## Quick start
 
-1. Build the workspace: `colcon build --symlink-install`
-2. Source: `source install/setup.bash`
-3. Start simulation: `ros2 launch demo_launcher start_sim.launch.py world:=resources/gazebo_worlds/turtlebot3_house_actors_dynamic.world`
-4. In another terminal, bring up robot + Nav2 + YOLO + vision safety:  
-   `ros2 launch demo_launcher bringup_tbot.launch.py use_sim_time:=true`
+1. Install ROS dependencies (from workspace root):  
+   `rosdep install -y --from-paths src --ignore-src`
+2. Install Python requirements for YOLO:  
+   `pip install -r src/yolo_inference_ros/requirements.txt`
+3. Get the YOLO model (e.g. into `test_temp/`):  
+   `wget https://huggingface.co/Ultralytics/YOLOv8/resolve/main/yolov8n.pt -O yolov8n.pt`  
+   Optional — export to TensorRT for faster inference:  
+   `yolo export model=yolov8n.pt format=engine device=0`  
+   (Add `half=True` for FP16. Use the resulting `yolov8n.engine` path as `model`.)
+4. Build the workspace:  
+   `colcon build --symlink-install`
+5. Source the workspace:  
+   `source install/setup.bash`
+6. Start the simulation:  
+   `ros2 launch demo_launcher start_sim.launch.py world:=resources/gazebo_worlds/turtlebot3_house_actors_dynamic.world`
+7. In another terminal, bring up robot, Nav2, YOLO, and vision safety:  
+   `ros2 launch demo_launcher bringup_tbot.launch.py use_sim_time:=true model:=/path/to/yolov8n.pt`  
+   (Use the path to your `.pt` or `.engine` file; omit `model:=...` to use the launch default.)  
