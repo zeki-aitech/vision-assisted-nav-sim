@@ -3,11 +3,17 @@
 <package format="3">
   <name>tbot_gazebo</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="trungnh.aitech@gmail.com">serene</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Gazebo simulation for TBot: worlds (TurtleBot3 house, actors), spawn and robot_state_publisher launch files.</description>
+  <maintainer email="trungnh.aitech@gmail.com">trungnh</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>tbot_description</exec_depend>
+  <exec_depend>tbot_control</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

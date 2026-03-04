@@ -18,7 +18,7 @@ setup(
         'ultralytics>=8.0.0',
     ],
     zip_safe=True,
-    maintainer='serene',
+    maintainer='trungnh',
     maintainer_email='trungnh.aitech@gmail.com',
     description='ROS 2 node for YOLO object detection: 2D/3D detections (vision_msgs), optional tracking and temporal filtering, depth-based 3D bounding boxes.',
     license='Apache-2.0',

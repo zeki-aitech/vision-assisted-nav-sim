@@ -3,9 +3,9 @@
 <package format="3">
   <name>tbot_control</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="trungnh.aitech@gmail.com">serene</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Twist multiplexer and joystick teleop (e.g. PS5) for tbot base velocity control.</description>
+  <maintainer email="trungnh.aitech@gmail.com">trungnh</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   

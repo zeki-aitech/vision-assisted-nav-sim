@@ -4,7 +4,7 @@
   <name>gazebo11_plugin_actor_collision</name>
   <version>1.0.0</version>
   <description>Gazebo plugin to enable collisions on animated actors (Gazebo 11 classic).</description>
-  <maintainer email="trungnh.aitech@gmail.com">serene</maintainer>
+  <maintainer email="trungnh.aitech@gmail.com">trungnh</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

@@ -13,7 +13,7 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='serene',
+    maintainer='trungnh',
     maintainer_email='trungnh.aitech@gmail.com',
     description='TODO: Package description',
     license='TODO: License declaration',

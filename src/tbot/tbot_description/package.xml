@@ -3,14 +3,13 @@
 <package format="3">
   <name>tbot_description</name>
   <version>0.0.0</version>
-  <description>
-  Package for the TBot robot description.
-  </description>
-  <maintainer email="trungnh.aitech@gmail.com">serene</maintainer>
-  <license>Apache 2.0</license>
+  <description>TBot robot description: URDF/xacro models and RViz config.</description>
+  <maintainer email="trungnh.aitech@gmail.com">trungnh</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-
+  <build_depend>urdf</build_depend>
+  <exec_depend>xacro</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

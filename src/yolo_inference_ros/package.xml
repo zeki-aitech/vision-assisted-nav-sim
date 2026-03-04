@@ -4,7 +4,7 @@
   <name>yolo_inference_ros</name>
   <version>0.0.0</version>
   <description>ROS 2 node for YOLO object detection: 2D/3D detections (vision_msgs), optional tracking and temporal filtering, depth-based 3D bounding boxes.</description>
-  <maintainer email="trungnh.aitech@gmail.com">serene</maintainer>
+  <maintainer email="trungnh.aitech@gmail.com">trungnh</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
