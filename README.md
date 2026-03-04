@@ -15,6 +15,7 @@ ROS 2 simulation for a TurtleBot navigating with vision-based safety: YOLO objec
 |---------------------|-------------------------------------------|
 | `demo_launcher`     | Top-level launch files                    |
 | `tbot_gazebo`       | Gazebo world, spawn, robot state publisher |
+| `tbot_description` | Robot description (URDF, xacro, RViz)    |
 | `tbot_nav`          | Nav2 launch and config                    |
 | `yolo_inference_ros`| YOLO detection + tracking node            |
 | `tbot_nav_behavior` | Vision safety clamp node                  |
