@@ -8,5 +8,6 @@ temp
 
 
 *.pt
+*.engine
 *.pyc
 *.mcap

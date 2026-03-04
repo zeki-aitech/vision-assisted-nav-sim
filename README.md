@@ -48,5 +48,5 @@ If you prefer to build the image yourself: from the repo root,
 6. Start the simulation:  
    `ros2 launch demo_launcher start_sim.launch.py world:=resources/gazebo_worlds/turtlebot3_house_actors_dynamic.world`
 7. In another terminal, bring up robot, Nav2, YOLO, and vision safety:  
-   `ros2 launch demo_launcher bringup_tbot.launch.py use_sim_time:=true model:=/path/to/yolov8n.pt`  
+   `ros2 launch demo_launcher bringup_tbot.launch.py use_sim_time:=true map:=/workspaces/vision-assisted-nav-sim/resources/maps/map_house.yaml model:=/path/to/yolov8n.pt`  
    (Use the path to your `.pt` or `.engine` file; omit `model:=...` to use the launch default.)  
