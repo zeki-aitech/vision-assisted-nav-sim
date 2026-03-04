@@ -20,6 +20,16 @@ ROS 2 simulation for a TurtleBot navigating with vision-based safety: YOLO objec
 | `yolo_inference_ros`| YOLO detection + tracking node            |
 | `tbot_nav_behavior` | Vision safety clamp node                  |
 
+## Development environment (Docker / Dev Container)
+
+The recommended way to develop and run the simulation is with the provided Dev Container (VS Code: “Reopen in Container”). It uses:
+
+- **Image**: `docker/Dockerfile` — ROS 2 Humble with CUDA, plus GUI libraries for Gazebo/RViz.
+- **Runtime**: host network, GPU access, X11 forwarding for display, 16 GB shared memory.
+
+If you prefer to build the image yourself: from the repo root,  
+`docker build -f docker/Dockerfile --build-arg USERNAME=$(whoami) docker/`
+
 ## Quick start
 
 1. Build the workspace: `colcon build --symlink-install`
