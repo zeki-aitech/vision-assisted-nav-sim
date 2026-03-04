@@ -15,8 +15,8 @@ setup(
     zip_safe=True,
     maintainer='trungnh',
     maintainer_email='trungnh.aitech@gmail.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='Vision-based safety behavior: clamps cmd_vel and cancels Nav2 goals using 3D detections (warning/stop distances, corridor).',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',

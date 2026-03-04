@@ -3,9 +3,19 @@
 <package format="3">
   <name>tbot_nav_behavior</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Vision-based safety behavior: clamps cmd_vel and cancels Nav2 goals using 3D detections (warning/stop distances, corridor).</description>
   <maintainer email="trungnh.aitech@gmail.com">trungnh</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
