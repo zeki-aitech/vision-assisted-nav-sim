@@ -11,12 +11,17 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        'numpy>=1.21,<3',
+        'torch>=2.0.0',
+        'ultralytics>=8.0.0',
+    ],
     zip_safe=True,
     maintainer='serene',
     maintainer_email='trungnh.aitech@gmail.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='ROS 2 node for YOLO object detection: 2D/3D detections (vision_msgs), optional tracking and temporal filtering, depth-based 3D bounding boxes.',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',
