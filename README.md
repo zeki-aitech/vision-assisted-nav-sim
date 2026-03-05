@@ -1,10 +1,10 @@
 # Vision-Assisted Navigation Simulation
 
-ROS 2 simulation for a TurtleBot navigating with vision-based safety: YOLO object detection and a behavior node that clamps velocity and interacts with Nav2 using 3D detections.
+ROS 2 simulation for a mobile robot (tbot) navigating with vision-based safety: YOLO object detection and a behavior node that clamps velocity and interacts with Nav2 using 3D detections.
 
 ## Overview
 
-- **Gazebo**: TurtleBot3 in a house world with actors.
+- **Gazebo**: a house world with actors.
 - **Nav2**: Standard navigation stack with a provided map.
 - **YOLO inference** (`yolo_inference_ros`): 2D/3D detections (vision_msgs), optional ByteTrack tracking, depth-based 3D boxes.
 - **Vision safety** (`tbot_nav_behavior`): Clamps `cmd_vel` and cancels Nav2 goals using warning/stop distances and corridor logic.
@@ -36,9 +36,9 @@ If you prefer to build the image yourself: from the repo root,
    `rosdep install -y --from-paths src --ignore-src`
 2. Install Python requirements for YOLO:  
    `pip install -r src/yolo_inference_ros/requirements.txt`
-3. Get the YOLO model (e.g. into `test_temp/`):  
+3. Get the YOLO model:  
    `wget https://huggingface.co/Ultralytics/YOLOv8/resolve/main/yolov8n.pt -O yolov8n.pt`  
-   Optional — export to TensorRT for faster inference:  
+   Export to TensorRT for faster inference:  
    `yolo export model=yolov8n.pt format=engine device=0`  
    (Add `half=True` for FP16. Use the resulting `yolov8n.engine` path as `model`.)
 4. Build the workspace:  
